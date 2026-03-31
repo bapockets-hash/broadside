@@ -1,0 +1,333 @@
+import { create } from 'zustand';
+
+export interface Position {
+  side: 'long' | 'short';
+  size: number;
+  entryPrice: number;
+  leverage: number;
+  marginHealth: number; // 0-100, 100=healthy, 0=liquidated
+  unrealizedPnl: number;
+  liquidationPrice: number;
+}
+
+export type GamePhase = 'idle' | 'aiming' | 'firing' | 'active' | 'retreating' | 'sunk';
+
+export interface CombatLogEntry {
+  message: string;
+  timestamp: number;
+  type: 'attack' | 'defend' | 'damage' | 'info' | 'victory' | 'defeat';
+}
+
+export interface Mission {
+  id: string;
+  title: string;
+  description: string;
+  target: number;
+  type: 'profit' | 'survive_waves' | 'trades' | 'leverage';
+  reward: number;
+  completed: boolean;
+}
+
+export interface SessionStats {
+  totalTrades: number;
+  wins: number;
+  bestPnl: number;
+  totalPnl: number;
+}
+
+const ALL_MISSIONS: Mission[] = [
+  { id: 'first_fire', title: 'OPEN FIRE', description: 'Place your first trade', target: 1, type: 'trades', reward: 50, completed: false },
+  { id: 'survive_10', title: 'SEA LEGS', description: 'Survive 10 price waves with open position', target: 10, type: 'survive_waves', reward: 100, completed: false },
+  { id: 'profit_50', title: 'PRIZE MONEY', description: 'Close a trade with +$50 profit', target: 50, type: 'profit', reward: 150, completed: false },
+  { id: 'max_leverage', title: 'RECKLESS', description: 'Fire at 10x leverage', target: 1, type: 'leverage', reward: 75, completed: false },
+  { id: 'profit_200', title: 'PLUNDER', description: 'Close a trade with +$200 profit', target: 200, type: 'profit', reward: 300, completed: false },
+];
+
+const RANK_THRESHOLDS: { xp: number; rank: string }[] = [
+  { xp: 30000, rank: 'Admiral of the Fleet' },
+  { xp: 15000, rank: 'Admiral' },
+  { xp: 8000, rank: 'Vice Admiral' },
+  { xp: 4000, rank: 'Rear Admiral' },
+  { xp: 2000, rank: 'Commodore' },
+  { xp: 1000, rank: 'Captain' },
+  { xp: 600, rank: 'Commander' },
+  { xp: 300, rank: 'Lieutenant' },
+  { xp: 100, rank: 'Ensign' },
+  { xp: 0, rank: 'Recruit' },
+];
+
+function calcRank(xp: number): string {
+  for (const threshold of RANK_THRESHOLDS) {
+    if (xp >= threshold.xp) return threshold.rank;
+  }
+  return 'Recruit';
+}
+
+export type Timeframe = '1m' | '5m' | '15m' | '30m' | '60m';
+
+// How many raw buffer ticks each timeframe looks back (ticks arrive ~every 1.5s)
+const TIMEFRAME_TICKS: Record<Timeframe, number> = {
+  '1m':  40,
+  '5m':  200,
+  '15m': 400,
+  '30m': 600,
+  '60m': 900,
+};
+const BUFFER_MAX = 900;
+const DISPLAY_POINTS = 30; // points shown on chart
+
+function downsample(arr: number[], n: number): number[] {
+  if (arr.length <= n) return arr;
+  const step = arr.length / n;
+  return Array.from({ length: n }, (_, i) => arr[Math.floor(i * step)]);
+}
+
+export interface GameState {
+  // Position state
+  position: Position | null;
+
+  // Game state
+  currentPrice: number;
+  priceHistory: number[];   // display-ready points for Phaser chart
+  priceBuffer: number[];    // full rolling buffer of raw ticks
+  timeframe: Timeframe;
+  leverage: number; // selected leverage 1-10
+  selectedSide: 'long' | 'short' | null;
+  tradeSize: number; // in USD
+  isLoading: boolean;
+  gamePhase: GamePhase;
+  combatLog: CombatLogEntry[];
+
+  // Meta game
+  combo: number;
+  comboTimer: number | null;
+  xp: number;
+  rank: string;
+  missions: Mission[];
+  missionProgress: Record<string, number>;
+  sessionStats: SessionStats;
+
+  // Actions
+  setCurrentPrice: (price: number) => void;
+  addPriceHistory: (price: number) => void;
+  setTimeframe: (tf: Timeframe) => void;
+  setPosition: (position: Position | null) => void;
+  setLeverage: (leverage: number) => void;
+  setSelectedSide: (side: 'long' | 'short' | null) => void;
+  setTradeSize: (size: number) => void;
+  setLoading: (loading: boolean) => void;
+  setGamePhase: (phase: GamePhase) => void;
+  clearPosition: () => void;
+  addCombatLog: (message: string, type: CombatLogEntry['type']) => void;
+
+  // Meta game actions
+  incrementCombo: () => void;
+  resetCombo: () => void;
+  addXP: (amount: number) => void;
+  completeMission: (id: string) => void;
+  updateMissionProgress: (type: string, value: number) => void;
+  updateSessionStats: (pnl: number, isWin: boolean) => void;
+}
+
+export const useGameStore = create<GameState>((set, get) => ({
+  position: null,
+  currentPrice: 65000,
+  priceHistory: Array(DISPLAY_POINTS).fill(65000),
+  priceBuffer: Array(DISPLAY_POINTS).fill(65000),
+  timeframe: '1m',
+  leverage: 1,
+  selectedSide: null,
+  tradeSize: 100,
+  isLoading: false,
+  gamePhase: 'idle',
+  combatLog: [
+    { message: 'SYSTEM ONLINE. AWAITING ORDERS.', timestamp: Date.now(), type: 'info' },
+  ],
+
+  // Meta game initial state
+  combo: 0,
+  comboTimer: null,
+  xp: 0,
+  rank: 'Recruit',
+  missions: ALL_MISSIONS.slice(0, 3),
+  missionProgress: {},
+  sessionStats: {
+    totalTrades: 0,
+    wins: 0,
+    bestPnl: 0,
+    totalPnl: 0,
+  },
+
+  setCurrentPrice: (price) =>
+    set((state) => {
+      // Update position PnL if active
+      let updatedPosition = state.position;
+      if (state.position) {
+        const { side, entryPrice, size, leverage } = state.position;
+        const priceChange = price - entryPrice;
+        const unrealizedPnl =
+          side === 'long'
+            ? (priceChange / entryPrice) * size * leverage
+            : (-priceChange / entryPrice) * size * leverage;
+
+        // Calculate margin health (0-100)
+        const maxLoss = size; // 100% of margin = liquidation
+        const currentLoss = -unrealizedPnl;
+        const marginHealth = Math.max(0, Math.min(100, 100 - (currentLoss / maxLoss) * 100));
+
+        // Calculate liquidation price
+        const liquidationMove = (1 / leverage) * entryPrice;
+        const liquidationPrice =
+          side === 'long' ? entryPrice - liquidationMove : entryPrice + liquidationMove;
+
+        updatedPosition = {
+          ...state.position,
+          unrealizedPnl: Math.round(unrealizedPnl * 100) / 100,
+          marginHealth: Math.round(marginHealth),
+          liquidationPrice: Math.round(liquidationPrice),
+        };
+      }
+
+      return {
+        currentPrice: price,
+        position: updatedPosition,
+      };
+    }),
+
+  addPriceHistory: (price) =>
+    set((state) => {
+      const newBuffer = [...state.priceBuffer, price].slice(-BUFFER_MAX);
+      const ticks = TIMEFRAME_TICKS[state.timeframe];
+      const window = newBuffer.slice(-ticks);
+      const priceHistory = downsample(window, DISPLAY_POINTS);
+      return { priceBuffer: newBuffer, priceHistory };
+    }),
+
+  setTimeframe: (tf) =>
+    set((state) => {
+      const ticks = TIMEFRAME_TICKS[tf];
+      const window = state.priceBuffer.slice(-ticks);
+      const priceHistory = downsample(window, DISPLAY_POINTS);
+      return { timeframe: tf, priceHistory };
+    }),
+
+  setPosition: (position) => set({ position }),
+
+  setLeverage: (leverage) => set({ leverage }),
+
+  setSelectedSide: (side) => set({ selectedSide: side }),
+
+  setTradeSize: (size) => set({ tradeSize: size }),
+
+  setLoading: (loading) => set({ isLoading: loading }),
+
+  setGamePhase: (phase) => set({ gamePhase: phase }),
+
+  clearPosition: () =>
+    set({
+      position: null,
+      gamePhase: 'idle',
+      isLoading: false,
+    }),
+
+  addCombatLog: (message, type) =>
+    set((state) => ({
+      combatLog: [
+        { message, timestamp: Date.now(), type },
+        ...state.combatLog.slice(0, 9),
+      ],
+    })),
+
+  incrementCombo: () =>
+    set((state) => {
+      // Clear existing timer
+      if (state.comboTimer) {
+        clearTimeout(state.comboTimer);
+      }
+      const newCombo = state.combo + 1;
+      // Reset combo after 10s
+      const timer = window.setTimeout(() => {
+        get().resetCombo();
+      }, 10000);
+      return { combo: newCombo, comboTimer: timer };
+    }),
+
+  resetCombo: () =>
+    set((state) => {
+      if (state.comboTimer) {
+        clearTimeout(state.comboTimer);
+      }
+      return { combo: 0, comboTimer: null };
+    }),
+
+  addXP: (amount) =>
+    set((state) => {
+      const newXP = state.xp + amount;
+      const newRank = calcRank(newXP);
+      return { xp: newXP, rank: newRank };
+    }),
+
+  completeMission: (id) =>
+    set((state) => {
+      const mission = state.missions.find(m => m.id === id);
+      if (!mission || mission.completed) return {};
+      const updatedMissions = state.missions.map(m =>
+        m.id === id ? { ...m, completed: true } : m
+      );
+      const newXP = state.xp + mission.reward;
+      const newRank = calcRank(newXP);
+      return {
+        missions: updatedMissions,
+        xp: newXP,
+        rank: newRank,
+      };
+    }),
+
+  updateMissionProgress: (type, value) =>
+    set((state) => {
+      const newProgress = { ...state.missionProgress };
+      const missionsByType = state.missions.filter(m => m.type === type && !m.completed);
+
+      let updatedMissions = state.missions;
+      let newXP = state.xp;
+
+      for (const mission of missionsByType) {
+        const currentProgress = newProgress[mission.id] || 0;
+        let newValue: number;
+
+        // For profit type, track the single best value (not cumulative)
+        if (type === 'profit') {
+          newValue = Math.max(currentProgress, value);
+        } else {
+          // For counts, accumulate
+          newValue = currentProgress + value;
+        }
+        newProgress[mission.id] = newValue;
+
+        // Check completion
+        if (newValue >= mission.target && !mission.completed) {
+          updatedMissions = updatedMissions.map(m =>
+            m.id === mission.id ? { ...m, completed: true } : m
+          );
+          newXP += mission.reward;
+        }
+      }
+
+      return {
+        missionProgress: newProgress,
+        missions: updatedMissions,
+        xp: newXP,
+        rank: calcRank(newXP),
+      };
+    }),
+
+  updateSessionStats: (pnl, isWin) =>
+    set((state) => ({
+      sessionStats: {
+        totalTrades: state.sessionStats.totalTrades + 1,
+        wins: state.sessionStats.wins + (isWin ? 1 : 0),
+        bestPnl: Math.max(state.sessionStats.bestPnl, pnl),
+        totalPnl: state.sessionStats.totalPnl + pnl,
+      },
+    })),
+}));
