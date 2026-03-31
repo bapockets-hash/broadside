@@ -18,6 +18,7 @@ export default function CommandPanel({ onFire, onRetreat }: CommandPanelProps) {
     setSelectedSide,
     setLeverage,
     setTradeSize,
+    lightMode,
   } = useGameStore();
 
   const canFire = selectedSide !== null && leverage >= 1 && tradeSize > 0 && !isLoading && gamePhase === 'idle';
@@ -29,11 +30,11 @@ export default function CommandPanel({ onFire, onRetreat }: CommandPanelProps) {
     <div
       className="w-full flex items-stretch gap-0"
       style={{
-        background: 'rgba(5, 15, 30, 0.85)',
+        background: lightMode ? 'rgba(230, 245, 255, 0.92)' : 'rgba(5, 15, 30, 0.85)',
         backdropFilter: 'blur(12px)',
         WebkitBackdropFilter: 'blur(12px)',
-        borderTop: '1px solid rgba(0,212,255,0.3)',
-        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.05)',
+        borderTop: lightMode ? '1px solid rgba(0,100,200,0.25)' : '1px solid rgba(0,212,255,0.3)',
+        boxShadow: lightMode ? 'none' : 'inset 0 1px 0 rgba(255,255,255,0.05)',
         minHeight: '120px',
         fontFamily: 'var(--font-share-tech-mono, monospace)',
       }}

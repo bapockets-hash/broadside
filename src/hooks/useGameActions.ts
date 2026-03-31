@@ -1,20 +1,13 @@
 import { useCallback, useEffect, useRef } from 'react';
+import { usePrivy } from '@privy-io/react-auth';
 import { useGameStore } from '@/store/gameStore';
 import { createPacificaClient } from '@/lib/pacifica';
 import { soundEngine } from '@/lib/soundEngine';
 
-// Helper: get user wallet info without Privy dependency
+// Always call usePrivy unconditionally — conditional hook calls violate Rules of Hooks
 function useWalletInfo() {
-  // Try to use Privy if available, otherwise fall back to demo mode
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { usePrivy } = require('@privy-io/react-auth');
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    const { user, signMessage } = usePrivy();
-    return { user, signMessage };
-  } catch {
-    return { user: null, signMessage: null };
-  }
+  const { user, signMessage } = usePrivy();
+  return { user, signMessage };
 }
 
 export function useFireCannons() {
@@ -79,6 +72,7 @@ export function useFireCannons() {
         size: tradeSize,
         leverage,
         orderType: 'market',
+        currentPrice,
       });
 
       // Calculate liquidation price
@@ -177,7 +171,7 @@ export function useRetreat() {
       };
 
       const client = createPacificaClient(walletAddress, signFn);
-      const result = await client.closePosition('BTC-PERP');
+      const result = await client.closePosition('BTC-PERP', useGameStore.getState().currentPrice);
 
       const pnl = position.unrealizedPnl;
       const pnlFormatted = `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;

@@ -1,5 +1,7 @@
 'use client';
 
+import { useGameStore } from '@/store/gameStore';
+
 interface Admiral {
   rank: number;
   address: string;
@@ -26,30 +28,32 @@ function truncateAddress(address: string): string {
 
 export default function Leaderboard() {
   const admirals = mockAdmirals;
+  const lightMode = useGameStore(s => s.lightMode);
 
   return (
     <div
       className="flex flex-col h-full panel-corners"
       style={{
-        background: 'rgba(5, 15, 30, 0.75)',
+        background: lightMode ? 'rgba(230, 245, 255, 0.92)' : 'rgba(5, 15, 30, 0.75)',
         backdropFilter: 'blur(12px)',
         WebkitBackdropFilter: 'blur(12px)',
-        borderRight: '1px solid rgba(0,212,255,0.2)',
+        borderRight: lightMode ? '1px solid rgba(0,100,200,0.25)' : '1px solid rgba(0,212,255,0.2)',
+        boxShadow: lightMode ? '0 8px 32px rgba(0,80,160,0.15)' : 'none',
         fontFamily: 'var(--font-share-tech-mono, monospace)',
       }}
     >
       {/* Header */}
       <div
         className="px-3 py-3 text-center"
-        style={{ borderBottom: '1px solid rgba(0,212,255,0.2)' }}
+        style={{ borderBottom: lightMode ? '1px solid rgba(0,100,200,0.2)' : '1px solid rgba(0,212,255,0.2)' }}
       >
         <div
           className="text-xs font-bold tracking-widest"
-          style={{ color: '#ffd700', textShadow: '0 0 10px rgba(255,215,0,0.5)', fontFamily: 'var(--font-orbitron, monospace)' }}
+          style={{ color: '#ffd700', textShadow: lightMode ? 'none' : '0 0 10px rgba(255,215,0,0.5)', fontFamily: 'var(--font-orbitron, monospace)' }}
         >
           ★ ADMIRAL RANKINGS ★
         </div>
-        <div className="text-xs mt-0.5" style={{ color: '#555' }}>
+        <div className="text-xs mt-0.5" style={{ color: lightMode ? '#5a6a7a' : '#555' }}>
           GLOBAL FLEET STANDINGS
         </div>
       </div>
@@ -59,9 +63,9 @@ export default function Leaderboard() {
         <div
           className="w-8 h-8 flex items-center justify-center rounded-full text-xs"
           style={{
-            border: '1px solid rgba(0,212,255,0.3)',
-            color: '#00d4ff',
-            background: 'rgba(0,212,255,0.05)',
+            border: lightMode ? '1px solid rgba(0,100,200,0.3)' : '1px solid rgba(0,212,255,0.3)',
+            color: lightMode ? '#0066cc' : '#00d4ff',
+            background: lightMode ? 'rgba(0,100,200,0.08)' : 'rgba(0,212,255,0.05)',
           }}
         >
           ⊕
@@ -76,17 +80,19 @@ export default function Leaderboard() {
             className="rounded px-2 py-2 relative overflow-hidden"
             style={{
               background: admiral.isCurrentPlayer
-                ? 'rgba(0,212,255,0.12)'
-                : 'rgba(255,255,255,0.03)',
-              border: `1px solid ${admiral.isCurrentPlayer ? 'rgba(0,212,255,0.5)' : 'rgba(255,255,255,0.07)'}`,
+                ? (lightMode ? 'rgba(0,100,200,0.1)' : 'rgba(0,212,255,0.12)')
+                : (lightMode ? 'rgba(0,0,0,0.04)' : 'rgba(255,255,255,0.03)'),
+              border: `1px solid ${admiral.isCurrentPlayer
+                ? (lightMode ? 'rgba(0,100,200,0.4)' : 'rgba(0,212,255,0.5)')
+                : (lightMode ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.07)')}`,
             }}
           >
             {admiral.isCurrentPlayer && (
               <div
                 className="absolute top-0 right-0 text-xs px-1"
                 style={{
-                  background: 'rgba(0,212,255,0.3)',
-                  color: '#00d4ff',
+                  background: lightMode ? 'rgba(0,100,200,0.15)' : 'rgba(0,212,255,0.3)',
+                  color: lightMode ? '#0066cc' : '#00d4ff',
                   fontSize: '9px',
                 }}
               >
@@ -103,7 +109,7 @@ export default function Leaderboard() {
                 {admiral.rank}
               </div>
               <div>
-                <div className="text-xs font-bold" style={{ color: '#ccc', fontFamily: 'var(--font-share-tech-mono, monospace)' }}>
+                <div className="text-xs font-bold" style={{ color: lightMode ? '#1a2a3a' : '#ccc', fontFamily: 'var(--font-share-tech-mono, monospace)' }}>
                   {truncateAddress(admiral.address)}
                 </div>
                 <div className="text-xs" style={{ color: rankStyles[admiral.rank - 1] || '#555', fontSize: '9px', fontFamily: 'var(--font-orbitron, monospace)' }}>
@@ -115,12 +121,12 @@ export default function Leaderboard() {
             {/* Stats */}
             <div className="flex justify-between text-xs" style={{ fontSize: '10px' }}>
               <div>
-                <span style={{ color: '#555' }}>SUNK: </span>
+                <span style={{ color: lightMode ? '#5a6a7a' : '#555' }}>SUNK: </span>
                 <span style={{ color: '#ff8800' }}>{admiral.shipsSunk}</span>
               </div>
               <div>
-                <span style={{ color: '#555' }}>VALUE: </span>
-                <span style={{ color: '#00ff88' }}>
+                <span style={{ color: lightMode ? '#5a6a7a' : '#555' }}>VALUE: </span>
+                <span style={{ color: '#00bb55' }}>
                   ${admiral.fleetValue.toLocaleString('en-US')}
                 </span>
               </div>
@@ -147,11 +153,11 @@ export default function Leaderboard() {
       {/* Footer stats */}
       <div
         className="px-3 py-2"
-        style={{ borderTop: '1px solid rgba(0,212,255,0.15)' }}
+        style={{ borderTop: lightMode ? '1px solid rgba(0,100,200,0.15)' : '1px solid rgba(0,212,255,0.15)' }}
       >
-        <div className="text-xs text-center" style={{ color: '#555', fontSize: '10px' }}>
+        <div className="text-xs text-center" style={{ color: lightMode ? '#5a6a7a' : '#555', fontSize: '10px' }}>
           <div>ACTIVE ADMIRALS: 247</div>
-          <div style={{ color: '#00d4ff', marginTop: '2px' }}>
+          <div style={{ color: lightMode ? '#0066cc' : '#00d4ff', marginTop: '2px' }}>
             TOTAL VOLUME: $4.2M
           </div>
         </div>

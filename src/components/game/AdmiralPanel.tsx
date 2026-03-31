@@ -51,7 +51,7 @@ interface MissionToastState {
 }
 
 export default function AdmiralPanel() {
-  const { xp, rank, missions, missionProgress, sessionStats } = useGameStore();
+  const { xp, rank, missions, missionProgress, sessionStats, combatLog, lightMode } = useGameStore();
   const [toast, setToast] = useState<MissionToastState | null>(null);
   const prevMissionsRef = useRef(missions);
   const prevXpRef = useRef(xp);
@@ -102,11 +102,11 @@ export default function AdmiralPanel() {
     <div
       className="flex flex-col h-full overflow-y-auto panel-corners"
       style={{
-        background: 'rgba(5, 15, 30, 0.75)',
+        background: lightMode ? 'rgba(230, 245, 255, 0.92)' : 'rgba(5, 15, 30, 0.75)',
         backdropFilter: 'blur(12px)',
         WebkitBackdropFilter: 'blur(12px)',
-        borderLeft: '1px solid rgba(0,212,255,0.2)',
-        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255,255,255,0.05)',
+        borderLeft: lightMode ? '1px solid rgba(0,100,200,0.25)' : '1px solid rgba(0,212,255,0.2)',
+        boxShadow: lightMode ? '0 8px 32px rgba(0,80,160,0.15)' : '0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255,255,255,0.05)',
         width: '200px',
         flexShrink: 0,
         position: 'relative',
@@ -324,6 +324,47 @@ export default function AdmiralPanel() {
               <span style={{ color }}>{value}</span>
             </div>
           ))}
+        </div>
+      </div>
+
+      {/* Combat Log */}
+      <div
+        className="px-3 py-2"
+        style={{ borderTop: '1px solid rgba(0,212,255,0.2)' }}
+      >
+        <div
+          className="text-xs font-bold tracking-widest mb-2"
+          style={{ color: '#00d4ff', fontFamily: 'var(--font-orbitron, monospace)' }}
+        >
+          COMBAT LOG
+        </div>
+        <div className="space-y-1">
+          {combatLog.slice(0, 5).map((entry, i) => {
+            const colors: Record<string, string> = {
+              attack: '#ff3333', defend: '#00ff88', damage: '#ff8800',
+              info: '#4a7a9b', victory: '#ffd700', defeat: '#ff3333',
+            };
+            const icons: Record<string, string> = {
+              attack: '⚔', defend: '🛡', damage: '💥',
+              info: '◈', victory: '★', defeat: '✗',
+            };
+            return (
+              <div
+                key={entry.timestamp + i}
+                className="flex items-start gap-1"
+                style={{
+                  color: colors[entry.type] || '#aaa',
+                  opacity: 1 - i * 0.18,
+                  fontSize: '9px',
+                  fontFamily: 'var(--font-share-tech-mono, monospace)',
+                  lineHeight: '1.3',
+                }}
+              >
+                <span style={{ flexShrink: 0 }}>{icons[entry.type] || '›'}</span>
+                <span style={{ wordBreak: 'break-word' }}>{entry.message}</span>
+              </div>
+            );
+          })}
         </div>
       </div>
 

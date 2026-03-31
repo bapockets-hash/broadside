@@ -82,14 +82,23 @@ function downsample(arr: number[], n: number): number[] {
   return Array.from({ length: n }, (_, i) => arr[Math.floor(i * step)]);
 }
 
+// Build a default timestamp buffer spaced by the given candle interval (ms)
+function defaultTimestamps(n: number, intervalMs: number): number[] {
+  const now = Date.now();
+  return Array.from({ length: n }, (_, i) => now - (n - 1 - i) * intervalMs);
+}
+
 export interface GameState {
   // Position state
   position: Position | null;
 
   // Game state
   currentPrice: number;
-  priceHistory: number[];   // display-ready points for Phaser chart
-  priceBuffer: number[];    // full rolling buffer of raw ticks
+  priceHistory: number[];      // display-ready prices (30 points) for Phaser chart
+  priceTimestamps: number[];   // display-ready timestamps (ms) matching priceHistory
+  priceBuffer: number[];       // full rolling buffer of raw prices
+  timestampBuffer: number[];   // full rolling buffer of corresponding timestamps
+  volumeHistory: number[];     // display-ready volumes (30 points) matching priceHistory
   timeframe: Timeframe;
   leverage: number; // selected leverage 1-10
   selectedSide: 'long' | 'short' | null;
@@ -106,10 +115,13 @@ export interface GameState {
   missions: Mission[];
   missionProgress: Record<string, number>;
   sessionStats: SessionStats;
+  lightMode: boolean;
 
   // Actions
   setCurrentPrice: (price: number) => void;
   addPriceHistory: (price: number) => void;
+  setHistoricalData: (prices: number[], timestamps: number[]) => void;
+  setVolumeHistory: (volumes: number[]) => void;
   setTimeframe: (tf: Timeframe) => void;
   setPosition: (position: Position | null) => void;
   setLeverage: (leverage: number) => void;
@@ -127,13 +139,17 @@ export interface GameState {
   completeMission: (id: string) => void;
   updateMissionProgress: (type: string, value: number) => void;
   updateSessionStats: (pnl: number, isWin: boolean) => void;
+  toggleLightMode: () => void;
 }
 
 export const useGameStore = create<GameState>((set, get) => ({
   position: null,
   currentPrice: 65000,
   priceHistory: Array(DISPLAY_POINTS).fill(65000),
+  priceTimestamps: defaultTimestamps(DISPLAY_POINTS, 60_000),
   priceBuffer: Array(DISPLAY_POINTS).fill(65000),
+  timestampBuffer: defaultTimestamps(DISPLAY_POINTS, 60_000),
+  volumeHistory: Array(DISPLAY_POINTS).fill(0),
   timeframe: '1m',
   leverage: 1,
   selectedSide: null,
@@ -157,6 +173,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     bestPnl: 0,
     totalPnl: 0,
   },
+  lightMode: false,
 
   setCurrentPrice: (price) =>
     set((state) => {
@@ -196,19 +213,52 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   addPriceHistory: (price) =>
     set((state) => {
+      const now = Date.now();
       const newBuffer = [...state.priceBuffer, price].slice(-BUFFER_MAX);
+      const newTsBuffer = [...state.timestampBuffer, now].slice(-BUFFER_MAX);
       const ticks = TIMEFRAME_TICKS[state.timeframe];
       const window = newBuffer.slice(-ticks);
-      const priceHistory = downsample(window, DISPLAY_POINTS);
-      return { priceBuffer: newBuffer, priceHistory };
+      const tsWindow = newTsBuffer.slice(-ticks);
+      return {
+        priceBuffer: newBuffer,
+        timestampBuffer: newTsBuffer,
+        priceHistory: downsample(window, DISPLAY_POINTS),
+        priceTimestamps: downsample(tsWindow, DISPLAY_POINTS),
+      };
+    }),
+
+  setHistoricalData: (prices, timestamps) =>
+    set((state) => {
+      // Each element is already one candle at the selected interval — take the last
+      // DISPLAY_POINTS directly. No downsampling: downsampling would skip candles and
+      // break the per-interval tick alignment on the time axis.
+      const priceBuffer = prices.slice(-BUFFER_MAX);
+      const timestampBuffer = timestamps.slice(-BUFFER_MAX);
+      return {
+        priceBuffer,
+        timestampBuffer,
+        priceHistory: priceBuffer.slice(-DISPLAY_POINTS),
+        priceTimestamps: timestampBuffer.slice(-DISPLAY_POINTS),
+        currentPrice: prices[prices.length - 1] ?? state.currentPrice,
+      };
     }),
 
   setTimeframe: (tf) =>
     set((state) => {
       const ticks = TIMEFRAME_TICKS[tf];
       const window = state.priceBuffer.slice(-ticks);
-      const priceHistory = downsample(window, DISPLAY_POINTS);
-      return { timeframe: tf, priceHistory };
+      const tsWindow = state.timestampBuffer.slice(-ticks);
+      return {
+        timeframe: tf,
+        priceHistory: downsample(window, DISPLAY_POINTS),
+        priceTimestamps: downsample(tsWindow, DISPLAY_POINTS),
+      };
+    }),
+
+  setVolumeHistory: (volumes) =>
+    set(() => {
+      const buf = volumes.slice(-BUFFER_MAX);
+      return { volumeHistory: buf.slice(-DISPLAY_POINTS) };
     }),
 
   setPosition: (position) => set({ position }),
@@ -330,4 +380,6 @@ export const useGameStore = create<GameState>((set, get) => ({
         totalPnl: state.sessionStats.totalPnl + pnl,
       },
     })),
+
+  toggleLightMode: () => set((state) => ({ lightMode: !state.lightMode })),
 }));

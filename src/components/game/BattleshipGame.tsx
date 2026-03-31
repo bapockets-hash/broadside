@@ -73,24 +73,46 @@ export default function BattleshipGame() {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         private btcSprite!: any;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        private hoverGraphics!: any;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        private hoverPriceLabel!: any;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        private hoverTimeLabel!: any;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        private hoverVolumeLabel!: any;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         private priceScaleGraphics!: any;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         private priceScaleLabels: any[] = [];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        private timeTickLabels: any[] = [];
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         private currentPriceLabel!: any;
 
         private waveTime = 0;
         private shipRockTime = 0;
+        private splinePoints: { x: number; y: number }[] = [];
+        private terrainCtrl: { x: number; y: number }[] = [];
+        private chartMinP = 0;
+        private chartMaxP = 0;
+        private hoverX = -1;
+        private hoverY = -1;
+        private hoverPinned = false;
+        private pinnedX = -1;
+        private volumeHistory: number[] = Array(30).fill(0);
         private marginHealth = 100;
         private gamePhase = 'idle';
         private priceHistory: number[] = Array(20).fill(65000);
+        private priceTimestamps: number[] = Array(20).fill(Date.now());
         private currentPrice = 65000;
+        private timeframe = '1m';
         private shipY = 320;
         private isSinking = false;
         private sinkProgress = 0;
         private explosionParticles: { x: number; y: number; vx: number; vy: number; life: number; color: number }[] = [];
         private unrealizedPnl = 0;
         private frameCount = 0;
+        private lightMode = false;
 
         // New state
         private fortressDamage = 0;
@@ -160,7 +182,8 @@ export default function BattleshipGame() {
           // Ship graphics
           this.shipGraphics = this.add.graphics();
           this.shipGraphics.setDepth(8);
-          this.shipY = height * 0.62;
+          // Place hull waterline stripe (y+9 in ship-local coords) exactly at water surface
+          this.shipY = height * 0.68 - 9;
 
           // Fortress graphics
           this.fortressGraphics = this.add.graphics();
@@ -195,8 +218,8 @@ export default function BattleshipGame() {
           this.priceScaleGraphics = this.add.graphics();
           this.priceScaleGraphics.setDepth(19);
 
-          // 5 tick labels (evenly spaced across price range)
-          for (let i = 0; i < 5; i++) {
+          // 6 price tick labels (evenly spaced from waterY to sea floor)
+          for (let i = 0; i < 6; i++) {
             const label = this.add.text(0, 0, '', {
               fontFamily: 'monospace',
               fontSize: '9px',
@@ -207,23 +230,105 @@ export default function BattleshipGame() {
             this.priceScaleLabels.push(label);
           }
 
-          // Current price marker label (brighter)
+          // 30 time tick labels — one per candle display point
+          for (let i = 0; i < 30; i++) {
+            const label = this.add.text(0, 0, '', {
+              fontFamily: 'monospace',
+              fontSize: '9px',
+              color: '#2a5a7c',
+              stroke: '#000000',
+              strokeThickness: 1,
+            }).setOrigin(0.5, 0).setDepth(20).setVisible(false);
+            this.timeTickLabels.push(label);
+          }
+
+          // Current price badge — large floating label
           this.currentPriceLabel = this.add.text(0, 0, '', {
             fontFamily: 'monospace',
-            fontSize: '10px',
+            fontSize: '11px',
+            color: '#ffffff',
+            backgroundColor: '#00cc44',
+            padding: { x: 4, y: 2 },
+            stroke: '#000000',
+            strokeThickness: 2,
+          }).setOrigin(1, 0.5).setDepth(22);
+
+          // Hover crosshair + dot layer
+          this.hoverGraphics = this.add.graphics();
+          this.hoverGraphics.setDepth(22);
+
+          // Hover price tag
+          this.hoverPriceLabel = this.add.text(0, 0, '', {
+            fontFamily: 'monospace',
+            fontSize: '11px',
+            color: '#ffffff',
+            backgroundColor: '#0a1e38',
+            padding: { x: 5, y: 3 },
+            stroke: '#00d4ff',
+            strokeThickness: 1,
+          }).setOrigin(0, 1).setDepth(23).setVisible(false);
+
+          // Hover time label (shows on time axis)
+          this.hoverTimeLabel = this.add.text(0, 0, '', {
+            fontFamily: 'monospace',
+            fontSize: '9px',
             color: '#00d4ff',
             backgroundColor: '#071828',
             padding: { x: 3, y: 1 },
             stroke: '#000000',
             strokeThickness: 1,
-          }).setOrigin(1, 0.5).setDepth(21);
+          }).setOrigin(0.5, 0).setDepth(23).setVisible(false);
 
-          // Price text (inside Phaser canvas — secondary display)
-          this.priceText = this.add.text(width - 20, 20, '', {
+          // Hover volume label (shows near terrain peak)
+          this.hoverVolumeLabel = this.add.text(0, 0, '', {
             fontFamily: 'monospace',
-            fontSize: '14px',
-            color: '#00d4ff',
-          }).setOrigin(1, 0).setDepth(10).setVisible(false);
+            fontSize: '9px',
+            color: '#aaffbb',
+            backgroundColor: '#071828',
+            padding: { x: 3, y: 1 },
+            stroke: '#000000',
+            strokeThickness: 1,
+          }).setOrigin(0.5, 1).setDepth(23).setVisible(false);
+
+          // Pointer tracking — only update when not pinned
+          this.input.on('pointermove', (pointer: { x: number; y: number }) => {
+            if (!this.hoverPinned) {
+              this.hoverX = pointer.x;
+              this.hoverY = pointer.y;
+            }
+          });
+          this.input.on('pointerout', () => {
+            if (!this.hoverPinned) {
+              this.hoverX = -1;
+              this.hoverY = -1;
+            }
+          });
+          // Click in sea: pin/unpin. Click above water: dismiss.
+          this.input.on('pointerdown', (pointer: { x: number; y: number }) => {
+            const wY = this.scale.height * 0.68;
+            if (pointer.y > wY) {
+              if (this.hoverPinned && Math.abs(pointer.x - this.pinnedX) < 24) {
+                // Second click near pin: unpin
+                this.hoverPinned = false;
+                this.pinnedX = -1;
+              } else {
+                // Pin at this x
+                this.hoverPinned = true;
+                this.pinnedX = pointer.x;
+                this.hoverX = pointer.x;
+                this.hoverY = pointer.y;
+              }
+            } else {
+              // Clicked above waterline: dismiss
+              this.hoverPinned = false;
+              this.pinnedX = -1;
+              this.hoverX = -1;
+              this.hoverY = -1;
+            }
+          });
+
+          // Price text (hidden — price shown in HUD instead)
+          this.priceText = this.add.text(0, 0, '').setVisible(false);
 
           // Phase text
           this.phaseText = this.add.text(width / 2, 30, 'AWAITING ORDERS', {
@@ -256,6 +361,8 @@ export default function BattleshipGame() {
           this.game.events.on('updateState', (state: {
             currentPrice: number;
             priceHistory: number[];
+            priceTimestamps: number[];
+            volumeHistory: number[];
             marginHealth: number;
             gamePhase: string;
             unrealizedPnl: number;
@@ -263,9 +370,15 @@ export default function BattleshipGame() {
             entryPrice: number;
             positionSide: 'long' | 'short' | null;
             liquidationPrice: number;
+            timeframe: string;
+            lightMode: boolean;
           }) => {
             this.currentPrice = state.currentPrice;
             this.priceHistory = state.priceHistory;
+            this.priceTimestamps = state.priceTimestamps;
+            this.volumeHistory = state.volumeHistory;
+            this.timeframe = state.timeframe;
+            this.lightMode = state.lightMode;
             this.marginHealth = state.marginHealth;
             this.unrealizedPnl = state.unrealizedPnl;
             this.entryPrice = state.entryPrice;
@@ -381,19 +494,24 @@ export default function BattleshipGame() {
           this.bgGraphics.clear();
 
           // --- Sky gradient based on health/phase ---
-          let topR = 10, topG = 20, topB = 40;
-          let botR = 26, botG = 58, botB = 92;
+          let topR: number, topG: number, topB: number;
+          let botR: number, botG: number, botB: number;
+
+          if (this.lightMode) {
+            topR = 100; topG = 180; topB = 240;
+            botR = 160; botG = 220; botB = 255;
+          } else {
+            topR = 10; topG = 20; topB = 40;
+            botR = 26; botG = 58; botB = 92;
+          }
 
           if (health < 40) {
-            // Blood red — critical
             topR = 26; topG = 8; topB = 8;
             botR = 58; botG = 8; botB = 8;
-          } else if (health < 70) {
-            // Dark orange tint — warning
+          } else if (health < 70 && !this.lightMode) {
             topR = 26; topG = 16; topB = 32;
             botR = 58; botG = 26; botB = 16;
-          } else if (phase === 'active' && pnl > 0) {
-            // Deep green tint — profitable
+          } else if (phase === 'active' && pnl > 0 && !this.lightMode) {
             topR = 10; topG = 20; topB = 32;
             botR = 26; botG = 42; botB = 16;
           }
@@ -423,41 +541,77 @@ export default function BattleshipGame() {
           this.bgLayersGraphics.clear();
           const waterY = height * 0.68;
 
-          // --- Twinkling stars ---
-          for (const star of this.stars) {
-            const alpha = star.baseAlpha * (0.5 + 0.5 * Math.sin(time * 2 + star.phase));
-            this.bgLayersGraphics.fillStyle(0xffffff, alpha);
-            const size = star.baseAlpha > 0.7 ? 1.5 : 1;
-            this.bgLayersGraphics.fillCircle(star.x, star.y, size);
-          }
+          const celestialX = width * 0.82;
+          const celestialY = height * 0.12;
 
-          // --- Moon with glow halos ---
-          const moonX = width * 0.82;
-          const moonY = height * 0.12;
-          // Outer halos
-          this.bgLayersGraphics.fillStyle(0xffffff, 0.03);
-          this.bgLayersGraphics.fillCircle(moonX, moonY, 50);
-          this.bgLayersGraphics.fillStyle(0xffffff, 0.06);
-          this.bgLayersGraphics.fillCircle(moonX, moonY, 35);
-          this.bgLayersGraphics.fillStyle(0xffffff, 0.12);
-          this.bgLayersGraphics.fillCircle(moonX, moonY, 25);
-          // Moon body
-          this.bgLayersGraphics.fillStyle(0xeeeedd, 0.95);
-          this.bgLayersGraphics.fillCircle(moonX, moonY, 20);
+          if (!this.lightMode) {
+            // --- Twinkling stars ---
+            for (const star of this.stars) {
+              const alpha = star.baseAlpha * (0.5 + 0.5 * Math.sin(time * 2 + star.phase));
+              this.bgLayersGraphics.fillStyle(0xffffff, alpha);
+              const size = star.baseAlpha > 0.7 ? 1.5 : 1;
+              this.bgLayersGraphics.fillCircle(star.x, star.y, size);
+            }
 
-          // --- Moon reflection on water ---
-          for (let ry = waterY; ry < waterY + 80; ry += 2) {
-            const dist = ry - waterY;
-            const shimmerAlpha = 0.02 + 0.06 * Math.max(0, 1 - dist / 80) * (0.5 + 0.5 * Math.sin(ry * 0.3 + time * 1.5));
-            const shimmerW = 20 - dist * 0.15;
-            if (shimmerW > 1) {
-              this.bgLayersGraphics.fillStyle(0xffffff, shimmerAlpha);
-              this.bgLayersGraphics.fillRect(moonX - shimmerW / 2, ry, shimmerW, 2);
+            // --- Moon with glow halos ---
+            this.bgLayersGraphics.fillStyle(0xffffff, 0.03);
+            this.bgLayersGraphics.fillCircle(celestialX, celestialY, 50);
+            this.bgLayersGraphics.fillStyle(0xffffff, 0.06);
+            this.bgLayersGraphics.fillCircle(celestialX, celestialY, 35);
+            this.bgLayersGraphics.fillStyle(0xffffff, 0.12);
+            this.bgLayersGraphics.fillCircle(celestialX, celestialY, 25);
+            this.bgLayersGraphics.fillStyle(0xeeeedd, 0.95);
+            this.bgLayersGraphics.fillCircle(celestialX, celestialY, 20);
+
+            // --- Moon reflection on water ---
+            for (let ry = waterY; ry < waterY + 80; ry += 2) {
+              const dist = ry - waterY;
+              const shimmerAlpha = 0.02 + 0.06 * Math.max(0, 1 - dist / 80) * (0.5 + 0.5 * Math.sin(ry * 0.3 + time * 1.5));
+              const shimmerW = 20 - dist * 0.15;
+              if (shimmerW > 1) {
+                this.bgLayersGraphics.fillStyle(0xffffff, shimmerAlpha);
+                this.bgLayersGraphics.fillRect(celestialX - shimmerW / 2, ry, shimmerW, 2);
+              }
+            }
+          } else {
+            // --- Sun with glow halos ---
+            this.bgLayersGraphics.fillStyle(0xffee88, 0.08);
+            this.bgLayersGraphics.fillCircle(celestialX, celestialY, 60);
+            this.bgLayersGraphics.fillStyle(0xffdd44, 0.15);
+            this.bgLayersGraphics.fillCircle(celestialX, celestialY, 42);
+            this.bgLayersGraphics.fillStyle(0xffcc00, 0.35);
+            this.bgLayersGraphics.fillCircle(celestialX, celestialY, 28);
+            this.bgLayersGraphics.fillStyle(0xffee88, 1);
+            this.bgLayersGraphics.fillCircle(celestialX, celestialY, 20);
+
+            // --- Sun sparkle rays ---
+            this.bgLayersGraphics.lineStyle(1.5, 0xffcc00, 0.5);
+            for (let r = 0; r < 8; r++) {
+              const angle = (r / 8) * Math.PI * 2 + time * 0.3;
+              const rx1 = celestialX + Math.cos(angle) * 28;
+              const ry1 = celestialY + Math.sin(angle) * 28;
+              const rx2 = celestialX + Math.cos(angle) * 44;
+              const ry2 = celestialY + Math.sin(angle) * 44;
+              this.bgLayersGraphics.beginPath();
+              this.bgLayersGraphics.moveTo(rx1, ry1);
+              this.bgLayersGraphics.lineTo(rx2, ry2);
+              this.bgLayersGraphics.strokePath();
+            }
+
+            // --- Sun reflection on water ---
+            for (let ry = waterY; ry < waterY + 80; ry += 2) {
+              const dist = ry - waterY;
+              const shimmerAlpha = 0.04 + 0.1 * Math.max(0, 1 - dist / 80) * (0.5 + 0.5 * Math.sin(ry * 0.3 + time * 1.5));
+              const shimmerW = 24 - dist * 0.18;
+              if (shimmerW > 1) {
+                this.bgLayersGraphics.fillStyle(0xffdd44, shimmerAlpha);
+                this.bgLayersGraphics.fillRect(celestialX - shimmerW / 2, ry, shimmerW, 2);
+              }
             }
           }
 
           // --- Left cliff silhouette ---
-          const cliffColor = 0x1a2030;
+          const cliffColor = this.lightMode ? 0x607080 : 0x1a2030;
           this.bgLayersGraphics.fillStyle(cliffColor, 1);
           // Jagged left cliff
           const cliffPts = [
@@ -506,19 +660,32 @@ export default function BattleshipGame() {
           this.bgLayersGraphics.fillPath();
 
           // --- Lighthouse (left background) ---
-          const lhX = width * 0.12;
-          const lhY = waterY - 90;
-          // Rocky island base
-          this.bgLayersGraphics.fillStyle(0x1a1a24, 0.9);
-          this.bgLayersGraphics.fillEllipse(lhX, waterY - 5, 40, 14);
-          // Tower
+          // Keep lhX within the cliff polygon's x-range (0–200px) so it always sits on rock
+          const lhX = Math.min(width * 0.12, 80);
+          // Interpolate exact cliff surface height at lhX using the same cliffPts polygon
+          const lhTopPts = cliffPts.slice(1, -1); // drop the bottom-fill points
+          let lhCliffY = waterY - 80;
+          for (let ci = 0; ci < lhTopPts.length - 1; ci++) {
+            const a = lhTopPts[ci], b = lhTopPts[ci + 1];
+            if (lhX >= a.x && lhX <= b.x) {
+              const t = (lhX - a.x) / (b.x - a.x);
+              lhCliffY = a.y + t * (b.y - a.y);
+              break;
+            }
+          }
+          // Lantern sits 55px above the cliff surface
+          const lhY = lhCliffY - 55;
+          // Rocky base: sits flush on cliff top
+          this.bgLayersGraphics.fillStyle(this.lightMode ? 0x607080 : 0x1a1a24, 0.9);
+          this.bgLayersGraphics.fillEllipse(lhX, lhCliffY + 4, 40, 14);
+          // Tower: from lantern level down into rocky base (8px overlap)
           this.bgLayersGraphics.fillStyle(0xd0d0c0, 0.9);
-          this.bgLayersGraphics.fillRect(lhX - 4, lhY, 8, 60);
+          this.bgLayersGraphics.fillRect(lhX - 4, lhY, 8, 63);
           // Lantern house
           this.bgLayersGraphics.fillStyle(0xf0f0e0, 0.9);
           this.bgLayersGraphics.fillRect(lhX - 6, lhY - 10, 12, 10);
           // Lantern light
-          this.bgLayersGraphics.fillStyle(0x00d4ff, 0.9);
+          this.bgLayersGraphics.fillStyle(this.lightMode ? 0xffdd00 : 0x00d4ff, 0.9);
           this.bgLayersGraphics.fillCircle(lhX, lhY - 5, 4);
 
           // Lighthouse beam (oscillating)
@@ -952,10 +1119,21 @@ export default function BattleshipGame() {
 
           const waterY = height * 0.68;
           const chartDepth = 55;
-          const chartRise = 10;
+          const chartRise  = 10;
           const totalRange = chartDepth + chartRise;
 
-          const prices = priceHistory.length >= 2 ? priceHistory : Array(20).fill(65000);
+          const raw = priceHistory.length >= 2 ? priceHistory : Array(20).fill(65000);
+
+          // --- Smoothing pass: 5-point moving average to remove sharp jumps ---
+          const smooth = (arr: number[], w = 3): number[] =>
+            arr.map((_, i) => {
+              const s = Math.max(0, i - w);
+              const e = Math.min(arr.length - 1, i + w);
+              const slice = arr.slice(s, e + 1);
+              return slice.reduce((a, b) => a + b, 0) / slice.length;
+            });
+          const prices = smooth(smooth(raw)); // two passes for extra silkiness
+
           const minP = Math.min(...prices);
           const maxP = Math.max(...prices);
           const priceRange = maxP - minP || 100;
@@ -963,24 +1141,114 @@ export default function BattleshipGame() {
           const priceToY = (p: number) =>
             (waterY + chartDepth) - ((p - minP) / priceRange) * totalRange;
 
+          // Subtle living ripple layered on top
           const ripple = (x: number) =>
-            Math.sin(x * 0.04 + time * 1.4) * 1.5 + Math.sin(x * 0.08 + time * 1.0) * 0.8;
+            Math.sin(x * 0.03 + time * 1.2) * 1.2 + Math.sin(x * 0.07 + time * 0.8) * 0.6;
 
-          const pts: { x: number; y: number }[] = prices.map((p, i) => {
-            const px = (i / (prices.length - 1)) * width;
-            return { x: px, y: priceToY(p) + ripple(px) };
-          });
+          // Sparse control points
+          const ctrl: { x: number; y: number }[] = prices.map((p, i) => ({
+            x: (i / (prices.length - 1)) * width,
+            y: priceToY(p) + ripple((i / (prices.length - 1)) * width),
+          }));
 
-          // Solid dark water background
-          this.waveGraphics.fillStyle(0x071828, 1);
+          // --- Catmull-Rom spline: generate dense smooth pts from control points ---
+          const spline: { x: number; y: number }[] = [];
+          const steps = 12; // sub-steps between each control point
+          for (let i = 0; i < ctrl.length - 1; i++) {
+            const p0 = ctrl[Math.max(0, i - 1)];
+            const p1 = ctrl[i];
+            const p2 = ctrl[i + 1];
+            const p3 = ctrl[Math.min(ctrl.length - 1, i + 2)];
+            for (let s = 0; s < steps; s++) {
+              const t  = s / steps;
+              const t2 = t * t;
+              const t3 = t2 * t;
+              const x = 0.5 * ((2 * p1.x) + (-p0.x + p2.x) * t + (2*p0.x - 5*p1.x + 4*p2.x - p3.x) * t2 + (-p0.x + 3*p1.x - 3*p2.x + p3.x) * t3);
+              const y = 0.5 * ((2 * p1.y) + (-p0.y + p2.y) * t + (2*p0.y - 5*p1.y + 4*p2.y - p3.y) * t2 + (-p0.y + 3*p1.y - 3*p2.y + p3.y) * t3);
+              spline.push({ x, y });
+            }
+          }
+          spline.push(ctrl[ctrl.length - 1]);
+
+          // Store for hover detection
+          this.splinePoints = spline;
+          this.chartMinP = minP;
+          this.chartMaxP = maxP;
+
+          // --- 1. Solid water background ---
+          this.waveGraphics.fillStyle(this.lightMode ? 0x1e6080 : 0x071828, 1);
           this.waveGraphics.fillRect(0, waterY, width, height - waterY);
 
-          // Colored fill from chart line to bottom
-          for (let i = 1; i < pts.length; i++) {
-            const p0 = pts[i - 1];
-            const p1 = pts[i];
-            const isUp = prices[i] >= prices[i - 1];
-            this.waveGraphics.fillStyle(isUp ? 0x00ff88 : 0xff3333, 0.08);
+          // --- 1b. Sea floor terrain — per-candle red/green by buy vs sell dominance ---
+          {
+            const vols = this.volumeHistory;
+            const rawPrices = this.priceHistory;
+            if (vols && vols.length >= 2) {
+              const floorY = height - 20;
+              const maxRockH = (floorY - waterY) * 0.35;
+              const maxVol = Math.max(...vols) || 1;
+              const nv = vols.length;
+
+              // Control points: one per candle, height ∝ volume
+              const ctrl = vols.map((v, i) => ({
+                x: (i / (nv - 1)) * width,
+                y: floorY - (v / maxVol) * maxRockH,
+              }));
+
+              // Store for hover lookup
+              this.terrainCtrl = ctrl;
+
+              // Build full Catmull-Rom spline, store each candle's segment separately
+              const segSteps = 10;
+              const segments: { x: number; y: number }[][] = [];
+              for (let i = 0; i < ctrl.length - 1; i++) {
+                const p0 = ctrl[Math.max(0, i - 1)];
+                const p1 = ctrl[i];
+                const p2 = ctrl[i + 1];
+                const p3 = ctrl[Math.min(ctrl.length - 1, i + 2)];
+                const seg: { x: number; y: number }[] = [];
+                for (let st = 0; st <= segSteps; st++) {
+                  const t = st / segSteps, t2 = t * t, t3 = t2 * t;
+                  seg.push({
+                    x: 0.5 * ((2*p1.x)+(-p0.x+p2.x)*t+(2*p0.x-5*p1.x+4*p2.x-p3.x)*t2+(-p0.x+3*p1.x-3*p2.x+p3.x)*t3),
+                    y: 0.5 * ((2*p1.y)+(-p0.y+p2.y)*t+(2*p0.y-5*p1.y+4*p2.y-p3.y)*t2+(-p0.y+3*p1.y-3*p2.y+p3.y)*t3),
+                  });
+                }
+                segments.push(seg);
+              }
+
+              // Draw each segment with its own color based on candle direction
+              for (let i = 0; i < segments.length; i++) {
+                const seg = segments[i];
+                // Green = buying dominated (price closed higher), red = selling dominated
+                const isUp = rawPrices[i + 1] >= rawPrices[i];
+                const color = isUp ? 0x1a7a2a : 0x7a1a1a;
+
+                this.waveGraphics.fillStyle(color, 0.85);
+                this.waveGraphics.beginPath();
+                this.waveGraphics.moveTo(seg[0].x, floorY);
+                for (const pt of seg) this.waveGraphics.lineTo(pt.x, pt.y);
+                this.waveGraphics.lineTo(seg[seg.length - 1].x, floorY);
+                this.waveGraphics.closePath();
+                this.waveGraphics.fillPath();
+
+                // Edge line
+                this.waveGraphics.lineStyle(1, color, 1.0);
+                this.waveGraphics.beginPath();
+                seg.forEach((pt, si) => si === 0 ? this.waveGraphics.moveTo(pt.x, pt.y) : this.waveGraphics.lineTo(pt.x, pt.y));
+                this.waveGraphics.strokePath();
+              }
+            }
+          }
+
+          // --- 2. Colored fill under the smoothed line, down to bottom ---
+          for (let i = 1; i < spline.length; i++) {
+            const p0 = spline[i - 1];
+            const p1 = spline[i];
+            // colour based on raw direction for that region
+            const srcIdx = Math.floor((i / spline.length) * (raw.length - 1));
+            const isUp = raw[Math.min(srcIdx + 1, raw.length - 1)] >= raw[srcIdx];
+            this.waveGraphics.fillStyle(isUp ? 0x00ff88 : 0xff3333, 0.07);
             this.waveGraphics.beginPath();
             this.waveGraphics.moveTo(p0.x, p0.y);
             this.waveGraphics.lineTo(p1.x, p1.y);
@@ -990,15 +1258,16 @@ export default function BattleshipGame() {
             this.waveGraphics.fillPath();
           }
 
-          // Semi-transparent water overlay
-          this.waveGraphics.fillStyle(0x0a2040, 0.72);
+          // --- 3. Water overlay (submerged effect) ---
+          this.waveGraphics.fillStyle(this.lightMode ? 0x2980b9 : 0x0a2040, this.lightMode ? 0.35 : 0.72);
           this.waveGraphics.fillRect(0, waterY, width, height - waterY);
 
-          // Price line
-          for (let i = 1; i < pts.length; i++) {
-            const p0 = pts[i - 1];
-            const p1 = pts[i];
-            const isUp = prices[i] >= prices[i - 1];
+          // --- 4. Smooth price line ---
+          for (let i = 1; i < spline.length; i++) {
+            const p0 = spline[i - 1];
+            const p1 = spline[i];
+            const srcIdx = Math.floor((i / spline.length) * (raw.length - 1));
+            const isUp = raw[Math.min(srcIdx + 1, raw.length - 1)] >= raw[srcIdx];
             const lineColor = isUp ? 0x00ff88 : 0xff4444;
             const aboveSurface = p0.y < waterY || p1.y < waterY;
             this.waveGraphics.lineStyle(aboveSurface ? 3 : 2, lineColor, aboveSurface ? 1 : 0.65);
@@ -1008,7 +1277,7 @@ export default function BattleshipGame() {
             this.waveGraphics.strokePath();
           }
 
-          // Sea surface shimmer line
+          // --- 5. Sea surface shimmer ---
           this.waveGraphics.lineStyle(1.5, 0x00d4ff, 0.35);
           this.waveGraphics.beginPath();
           for (let wx = 0; wx <= width; wx += 3) {
@@ -1018,9 +1287,9 @@ export default function BattleshipGame() {
           }
           this.waveGraphics.strokePath();
 
-          // Glowing dot at latest price
-          const last = pts[pts.length - 1];
-          const lastIsUp = prices[prices.length - 1] >= prices[prices.length - 2];
+          // --- 6. Glowing dot at latest price ---
+          const last = spline[spline.length - 1];
+          const lastIsUp = raw[raw.length - 1] >= raw[raw.length - 2];
           const dotColor = lastIsUp ? 0x00ff88 : 0xff4444;
           const aboveSurface = last.y < waterY;
           this.waveGraphics.fillStyle(dotColor, aboveSurface ? 0.4 : 0.2);
@@ -1042,25 +1311,27 @@ export default function BattleshipGame() {
           const maxP = Math.max(...prices);
           const priceRange = maxP - minP || 100;
 
+          // Maps price → y (same formula as drawWaves)
           const priceToY = (p: number) =>
             (waterY + chartDepth) - ((p - minP) / priceRange) * totalRange;
 
-          const axisX = width - 8; // right edge
-          const topY  = priceToY(maxP);
-          const botY  = priceToY(minP);
+          // Inverts priceToY: maps y → price (for labelling arbitrary y positions)
+          const yToPrice = (y: number) =>
+            minP + ((waterY + chartDepth - y) / totalRange) * priceRange;
 
-          // Vertical axis line
+          const axisX = width - 8;
+
+          // ── Vertical axis line: full water depth (waterY → height) ──
           this.priceScaleGraphics.lineStyle(1, 0x1a3a5c, 0.8);
           this.priceScaleGraphics.beginPath();
-          this.priceScaleGraphics.moveTo(axisX, topY);
-          this.priceScaleGraphics.lineTo(axisX, botY);
+          this.priceScaleGraphics.moveTo(axisX, waterY);
+          this.priceScaleGraphics.lineTo(axisX, height);
           this.priceScaleGraphics.strokePath();
 
-          // 5 evenly-spaced tick marks + labels
-          for (let i = 0; i < 5; i++) {
-            const t = i / 4;
-            const tickPrice = minP + t * priceRange;
-            const tickY = priceToY(tickPrice);
+          // ── 6 price ticks evenly spaced from waterY to sea floor ──
+          for (let i = 0; i < 6; i++) {
+            const tickY = waterY + (i / 5) * (height - waterY);
+            const tickPrice = yToPrice(tickY);
 
             // Tick mark
             this.priceScaleGraphics.lineStyle(1, 0x1a3a5c, 0.7);
@@ -1070,13 +1341,12 @@ export default function BattleshipGame() {
             this.priceScaleGraphics.strokePath();
 
             // Subtle horizontal grid line
-            this.priceScaleGraphics.lineStyle(1, 0x1a3a5c, 0.15);
+            this.priceScaleGraphics.lineStyle(1, 0x1a3a5c, 0.12);
             this.priceScaleGraphics.beginPath();
             this.priceScaleGraphics.moveTo(0, tickY);
             this.priceScaleGraphics.lineTo(axisX - 4, tickY);
             this.priceScaleGraphics.strokePath();
 
-            // Label
             const label = this.priceScaleLabels[i];
             if (label) {
               label.setText(`$${Math.round(tickPrice).toLocaleString()}`);
@@ -1084,34 +1354,207 @@ export default function BattleshipGame() {
             }
           }
 
-          // Current price marker
+          // ── Current price marker ──
           const curY = priceToY(currentPrice);
-          const isUp = currentPrice >= prices[0];
-          const markerColor = isUp ? 0x00ff88 : 0xff4444;
+          const isUp = currentPrice >= prices[prices.length - 2];
+          const markerColor = isUp ? 0x00cc44 : 0xff3333;
+          const markerHex  = isUp ? '#00cc44' : '#ff3333';
 
-          // Dashed horizontal line at current price
-          this.priceScaleGraphics.lineStyle(1, markerColor, 0.5);
-          for (let dx = 0; dx < axisX - 4; dx += 8) {
-            this.priceScaleGraphics.beginPath();
-            this.priceScaleGraphics.moveTo(dx, curY);
-            this.priceScaleGraphics.lineTo(Math.min(dx + 4, axisX - 4), curY);
-            this.priceScaleGraphics.strokePath();
-          }
+          // Full-width solid horizontal rule at current price
+          this.priceScaleGraphics.lineStyle(1.5, markerColor, 0.55);
+          this.priceScaleGraphics.beginPath();
+          this.priceScaleGraphics.moveTo(0, curY);
+          this.priceScaleGraphics.lineTo(axisX, curY);
+          this.priceScaleGraphics.strokePath();
 
-          // Triangle marker on axis
+          // Triangle pointer on axis
           this.priceScaleGraphics.fillStyle(markerColor, 1);
           this.priceScaleGraphics.beginPath();
-          this.priceScaleGraphics.moveTo(axisX + 2, curY);
-          this.priceScaleGraphics.lineTo(axisX - 6, curY - 5);
-          this.priceScaleGraphics.lineTo(axisX - 6, curY + 5);
+          this.priceScaleGraphics.moveTo(axisX + 4, curY);
+          this.priceScaleGraphics.lineTo(axisX - 6, curY - 7);
+          this.priceScaleGraphics.lineTo(axisX - 6, curY + 7);
           this.priceScaleGraphics.closePath();
           this.priceScaleGraphics.fillPath();
 
-          // Current price label
+          // Current price badge
           if (this.currentPriceLabel) {
+            this.currentPriceLabel.setFontSize('11px');
             this.currentPriceLabel.setText(`$${Math.round(currentPrice).toLocaleString()}`);
-            this.currentPriceLabel.setPosition(axisX - 9, curY);
-            this.currentPriceLabel.setColor(isUp ? '#00ff88' : '#ff4444');
+            this.currentPriceLabel.setPosition(axisX - 4, curY);
+            this.currentPriceLabel.setColor('#ffffff');
+            this.currentPriceLabel.setBackgroundColor(markerHex);
+          }
+
+          // ── Time axis at sea floor ──
+          const timeAxisY = height - 2;
+          const timestamps = this.priceTimestamps;
+          const n = timestamps.length;
+
+          // Horizontal axis line along sea floor
+          this.priceScaleGraphics.lineStyle(1, 0x1a3a5c, 0.6);
+          this.priceScaleGraphics.beginPath();
+          this.priceScaleGraphics.moveTo(0, timeAxisY);
+          this.priceScaleGraphics.lineTo(width, timeAxisY);
+          this.priceScaleGraphics.strokePath();
+
+          // Hide all labels first, then show the ones that fit
+          for (const lbl of this.timeTickLabels) lbl.setVisible(false);
+
+          // One tick per candle boundary — each priceTimestamp IS a candle open time
+          const minLabelSpacing = 34; // px minimum between label centres
+          let lastLabelX = -minLabelSpacing;
+          let labelIdx = 0;
+
+          for (let i = 0; i < n; i++) {
+            const tickX = n > 1 ? (i / (n - 1)) * width : 0;
+            const ts = timestamps[i];
+
+            // Tick mark — taller every 5 candles for readability
+            const isMajor = i % 5 === 0 || i === n - 1;
+            this.priceScaleGraphics.lineStyle(1, 0x1a3a5c, isMajor ? 0.85 : 0.4);
+            this.priceScaleGraphics.beginPath();
+            this.priceScaleGraphics.moveTo(tickX, timeAxisY);
+            this.priceScaleGraphics.lineTo(tickX, timeAxisY - (isMajor ? 6 : 3));
+            this.priceScaleGraphics.strokePath();
+
+            // Label only where there is enough horizontal room
+            if (ts && tickX - lastLabelX >= minLabelSpacing && labelIdx < this.timeTickLabels.length) {
+              const d = new Date(ts);
+              const h24 = d.getHours();
+              const h12 = h24 % 12 || 12;
+              const ampm = h24 < 12 ? 'AM' : 'PM';
+              const mm = d.getMinutes().toString().padStart(2, '0');
+              const lbl = this.timeTickLabels[labelIdx++];
+              lbl.setText(`${h12}:${mm}${ampm}`);
+              lbl.setPosition(tickX, timeAxisY - 16);
+              lbl.setVisible(true);
+              lastLabelX = tickX;
+            }
+          }
+        }
+
+        private drawHover(width: number, height: number) {
+          this.hoverGraphics.clear();
+
+          const waterY = height * 0.68;
+
+          // Determine active X: pinned takes priority, otherwise only show in sea area
+          let activeX: number;
+          if (this.hoverPinned && this.pinnedX >= 0) {
+            activeX = this.pinnedX;
+          } else if (this.hoverX >= 0 && this.hoverY > waterY) {
+            activeX = this.hoverX;
+          } else {
+            this.hoverPriceLabel.setVisible(false);
+            this.hoverTimeLabel.setVisible(false);
+            this.hoverVolumeLabel.setVisible(false);
+            return;
+          }
+
+          if (this.splinePoints.length === 0) {
+            this.hoverPriceLabel.setVisible(false);
+            this.hoverTimeLabel.setVisible(false);
+            this.hoverVolumeLabel.setVisible(false);
+            return;
+          }
+
+          // Find nearest spline point to activeX
+          let nearest = this.splinePoints[0];
+          let minDist = Infinity;
+          for (const pt of this.splinePoints) {
+            const d = Math.abs(pt.x - activeX);
+            if (d < minDist) { minDist = d; nearest = pt; }
+          }
+
+          // Interpolate the raw (unsmoothed) price at activeX
+          const raw = this.priceHistory;
+          const n = raw.length;
+          const t = Math.max(0, Math.min(1, activeX / width));
+          const fi = t * (n - 1);
+          const lo = Math.floor(fi);
+          const hi = Math.min(n - 1, lo + 1);
+          const price = raw[lo] + (fi - lo) * (raw[hi] - raw[lo]);
+
+          // Corresponding timestamp
+          const ts = this.priceTimestamps[Math.round(t * (this.priceTimestamps.length - 1))];
+
+          // Vertical dashed crosshair line (water surface → sea floor)
+          this.hoverGraphics.lineStyle(1, 0x00d4ff, 0.25);
+          for (let dy = waterY; dy < height; dy += 8) {
+            this.hoverGraphics.beginPath();
+            this.hoverGraphics.moveTo(nearest.x, dy);
+            this.hoverGraphics.lineTo(nearest.x, Math.min(dy + 4, height));
+            this.hoverGraphics.strokePath();
+          }
+
+          // Outer glow ring (brighter when pinned)
+          this.hoverGraphics.lineStyle(3, 0x00d4ff, this.hoverPinned ? 0.6 : 0.2);
+          this.hoverGraphics.strokeCircle(nearest.x, nearest.y, 8);
+          // Pinned: extra outer ring
+          if (this.hoverPinned) {
+            this.hoverGraphics.lineStyle(1.5, 0xffd700, 0.7);
+            this.hoverGraphics.strokeCircle(nearest.x, nearest.y, 12);
+          }
+          // Inner filled dot
+          this.hoverGraphics.fillStyle(0x00d4ff, 1);
+          this.hoverGraphics.fillCircle(nearest.x, nearest.y, 4);
+          // White centre pinpoint
+          this.hoverGraphics.fillStyle(0xffffff, 1);
+          this.hoverGraphics.fillCircle(nearest.x, nearest.y, 1.5);
+
+          // Price label — keep inside canvas bounds
+          const labelText = `$${Math.round(price).toLocaleString()}`;
+          const labelOffX = nearest.x + 10 > width - 75 ? -10 : 10;
+          const labelOriginX = labelOffX > 0 ? 0 : 1;
+          const labelY = Math.max(waterY + 4, nearest.y - 16);
+          this.hoverPriceLabel.setText(labelText);
+          this.hoverPriceLabel.setOrigin(labelOriginX, 1);
+          this.hoverPriceLabel.setPosition(nearest.x + labelOffX, labelY);
+          this.hoverPriceLabel.setVisible(true);
+
+          // Time label on the sea-floor axis
+          if (ts) {
+            const d = new Date(ts);
+            const h24 = d.getHours();
+            const h12 = h24 % 12 || 12;
+            const ampm = h24 < 12 ? 'AM' : 'PM';
+            const mm = d.getMinutes().toString().padStart(2, '0');
+            this.hoverTimeLabel.setText(`${h12}:${mm} ${ampm}`);
+            this.hoverTimeLabel.setPosition(nearest.x, height - 28);
+            this.hoverTimeLabel.setVisible(true);
+          }
+
+          // Volume dot + label at terrain peak
+          const volIdx = Math.round(t * (this.volumeHistory.length - 1));
+          const vol = this.volumeHistory[volIdx] ?? 0;
+          if (vol > 0 && this.terrainCtrl.length > 0) {
+            // Find nearest terrain ctrl point
+            let nearestTerrain = this.terrainCtrl[0];
+            for (const pt of this.terrainCtrl) {
+              if (Math.abs(pt.x - activeX) < Math.abs(nearestTerrain.x - activeX)) nearestTerrain = pt;
+            }
+
+            // Dot at terrain peak
+            const isUp = volIdx === 0 ? true : this.priceHistory[volIdx] >= this.priceHistory[volIdx - 1];
+            const dotColor = isUp ? 0x2eb83a : 0xb83a2e;
+            this.hoverGraphics.fillStyle(dotColor, 1);
+            this.hoverGraphics.fillCircle(nearestTerrain.x, nearestTerrain.y, 3.5);
+            this.hoverGraphics.lineStyle(1.5, dotColor, 0.5);
+            this.hoverGraphics.strokeCircle(nearestTerrain.x, nearestTerrain.y, 6);
+
+            // Format volume: e.g. 1.4M, 320K
+            const volText = vol >= 1_000_000
+              ? `VOL ${(vol / 1_000_000).toFixed(2)}M`
+              : vol >= 1_000
+              ? `VOL ${(vol / 1_000).toFixed(0)}K`
+              : `VOL ${vol.toFixed(0)}`;
+
+            this.hoverVolumeLabel.setText(volText);
+            this.hoverVolumeLabel.setStyle({ color: isUp ? '#44dd66' : '#dd4444' });
+            this.hoverVolumeLabel.setPosition(nearestTerrain.x, nearestTerrain.y - 5);
+            this.hoverVolumeLabel.setVisible(true);
+          } else {
+            this.hoverVolumeLabel.setVisible(false);
           }
         }
 
@@ -1684,6 +2127,9 @@ export default function BattleshipGame() {
           // Draw price scale (right axis)
           this.drawPriceScale(width, height, this.priceHistory, this.currentPrice);
 
+          // Draw hover crosshair + dot
+          this.drawHover(width, height);
+
           // Ship position with rocking
           const shipX = width * 0.2;
           const rockY = Math.sin(this.shipRockTime * 1.2) * 3;
@@ -1788,6 +2234,8 @@ export default function BattleshipGame() {
     game.events.emit('updateState', {
       currentPrice: store.currentPrice,
       priceHistory: store.priceHistory,
+      priceTimestamps: store.priceTimestamps,
+      volumeHistory: store.volumeHistory,
       marginHealth: store.position?.marginHealth ?? 100,
       gamePhase: store.gamePhase,
       unrealizedPnl: store.position?.unrealizedPnl ?? 0,
@@ -1795,6 +2243,8 @@ export default function BattleshipGame() {
       entryPrice: store.position?.entryPrice ?? 0,
       positionSide: store.position?.side ?? null,
       liquidationPrice: store.position?.liquidationPrice ?? 0,
+      timeframe: store.timeframe,
+      lightMode: store.lightMode,
     });
 
     // Fire torpedo when price moves against position
@@ -1806,7 +2256,7 @@ export default function BattleshipGame() {
         game.events.emit('torpedo');
       }
     }
-  }, [store.currentPrice, store.gamePhase, store.position, store.priceHistory, store.combo]);
+  }, [store.currentPrice, store.gamePhase, store.position, store.priceHistory, store.volumeHistory, store.combo, store.timeframe, store.lightMode]);
 
   return (
     <div

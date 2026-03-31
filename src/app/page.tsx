@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic';
 import { useGameStore } from '@/store/gameStore';
 import { createPriceWebSocket } from '@/lib/priceWebSocket';
 import { useFireCannons, useRetreat, usePositionMonitor } from '@/hooks/useGameActions';
+import { useHistoricalPrices } from '@/hooks/useHistoricalPrices';
 import CommandPanel from '@/components/game/CommandPanel';
 import HUD from '@/components/game/HUD';
 import Leaderboard from '@/components/game/Leaderboard';
@@ -34,6 +35,7 @@ function GameContent() {
   const fireCannons = useFireCannons();
   const retreat = useRetreat();
   usePositionMonitor();
+  useHistoricalPrices();
 
   // Always start price feed — WebSocket with fallback to simulation
   useEffect(() => {
