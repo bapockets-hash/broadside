@@ -1,36 +1,87 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Broadside
 
-## Getting Started
+**Broadside** is a naval-combat themed perpetuals trading game built on **Pacifica**.
 
-First, run the development server:
+It turns perp trading into a tactical battle experience: opening a long or short becomes firing a broadside, leverage becomes combat risk, and liquidation pressure becomes hull damage. The goal is to make trading feel more intuitive, engaging, and memorable through a game-native interface.
+
+## For Judges
+
+- **Track:** Pacifica Gaming Track
+- **Project:** Broadside
+- **What it does:** A battleship-style trading interface for perpetuals on Pacifica
+- **Core idea:** Transform trading decisions into tactical naval combat mechanics
+- **Built with:** Pacifica API, Next.js, Phaser, Zustand, Privy
+- **Best way to evaluate:** Watch the demo, then try the live app
+
+## Why Broadside
+
+Perpetual trading interfaces are powerful, but they can feel sterile and intimidating. Broadside explores a different approach:
+
+- make trading **visceral and game-like**
+- make risk states more **readable through metaphor**
+- create a more memorable and engaging way to interact with perps
+- show how trading infrastructure can support **new consumer experiences**, not just standard dashboards
+
+## How It Works
+
+Players enter a naval battle command interface and trade perps through combat actions:
+
+- **Open Long / Short** positions through the command panel
+- **Adjust leverage** as your combat risk multiplier
+- **Track PnL, liquidation risk, and market stats** through the HUD
+- **Retreat** to close your position
+- Watch price movement and position state play out in a real-time battleship UI
+
+The experience reframes trading as tactical command rather than abstract chart clicking.
+
+## Pacifica Integration
+
+Broadside uses Pacifica for core trading functionality, including:
+
+- perpetual market price access
+- market statistics and position state
+- leverage configuration
+- market order execution
+- position monitoring
+- builder code approval flow
+
+This project was built specifically to explore a **game-native frontend for Pacifica perps**.
+
+## Features
+
+- Naval-combat themed perp trading interface
+- Real-time market-driven game state
+- Command panel for trade execution
+- HUD for position status, PnL, and risk
+- Leaderboard / rank / mission progression
+- Wallet connection flow
+- Demo fallback support for presentation and testing
+
+## Tech Stack
+
+- **Frontend:** Next.js, React, TypeScript
+- **Game Engine:** Phaser
+- **State Management:** Zustand
+- **Auth / Wallet:** Privy + Solana wallet support
+- **API / Trading:** Pacifica
+- **Styling:** CSS / Tailwind-era utility setup
+
+## Demo
+
+- **Live app:** [Add link]
+- **Demo video:** [Add link]
+
+## Screenshots
+
+Add these before submission:
+- Landing / wallet connect screen
+- Main battle interface
+- Command panel while opening a trade
+- HUD showing active position / PnL / risk
+- Optional GIF of opening and closing a position
+
+## Local Development
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
-
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
