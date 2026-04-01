@@ -1,23 +1,18 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { usePrivy } from '@privy-io/react-auth';
 import { useGameStore } from '@/store/gameStore';
 import { createPacificaClient } from '@/lib/pacifica';
 import { soundEngine } from '@/lib/soundEngine';
-
-// Always call usePrivy unconditionally — conditional hook calls violate Rules of Hooks
-function useWalletInfo() {
-  const { user, signMessage } = usePrivy();
-  return { user, signMessage };
-}
+import { usePacificaSigner } from '@/hooks/usePacificaSigner';
 
 export function useFireCannons() {
-  const { user, signMessage } = useWalletInfo();
+  const { walletAddress, signFn } = usePacificaSigner();
   const {
     selectedSide,
     leverage,
     tradeSize,
     currentPrice,
     gamePhase,
+    selectedSymbol,
     setLoading,
     setGamePhase,
     setPosition,
@@ -51,23 +46,10 @@ export function useFireCannons() {
       // Play cannon fire sound
       soundEngine.playCannonFire();
 
-      const walletAddress = user?.wallet?.address || 'demo-wallet';
-      const hasWallet = !!user?.wallet?.address;
-
-      const signFn = async (message: string): Promise<string> => {
-        if (!hasWallet || !signMessage) return 'demo-sig';
-        try {
-          const result = await signMessage({ message });
-          return result.signature;
-        } catch {
-          return 'demo-sig';
-        }
-      };
-
-      const client = createPacificaClient(walletAddress, signFn);
+      const client = createPacificaClient(walletAddress ?? 'demo-wallet', signFn);
 
       const order = await client.placeOrder({
-        symbol: 'BTC-PERP',
+        symbol: selectedSymbol + '-PERP',
         side: selectedSide === 'long' ? 'buy' : 'sell',
         size: tradeSize,
         leverage,
@@ -119,8 +101,9 @@ export function useFireCannons() {
     tradeSize,
     currentPrice,
     gamePhase,
-    user,
-    signMessage,
+    selectedSymbol,
+    walletAddress,
+    signFn,
     setLoading,
     setGamePhase,
     setPosition,
@@ -133,9 +116,10 @@ export function useFireCannons() {
 }
 
 export function useRetreat() {
-  const { user, signMessage } = useWalletInfo();
+  const { walletAddress, signFn } = usePacificaSigner();
   const {
     position,
+    selectedSymbol,
     setLoading,
     setGamePhase,
     clearPosition,
@@ -157,21 +141,8 @@ export function useRetreat() {
     addCombatLog('🚩 FLEET RETREATING...', 'info');
 
     try {
-      const walletAddress = user?.wallet?.address || 'demo-wallet';
-      const hasWallet = !!user?.wallet?.address;
-
-      const signFn = async (message: string): Promise<string> => {
-        if (!hasWallet || !signMessage) return 'demo-sig';
-        try {
-          const result = await signMessage({ message });
-          return result.signature;
-        } catch {
-          return 'demo-sig';
-        }
-      };
-
-      const client = createPacificaClient(walletAddress, signFn);
-      const result = await client.closePosition('BTC-PERP', useGameStore.getState().currentPrice);
+      const client = createPacificaClient(walletAddress ?? 'demo-wallet', signFn);
+      const result = await client.closePosition(selectedSymbol + '-PERP', useGameStore.getState().currentPrice);
 
       const pnl = position.unrealizedPnl;
       const pnlFormatted = `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
@@ -214,8 +185,9 @@ export function useRetreat() {
     }
   }, [
     position,
-    user,
-    signMessage,
+    selectedSymbol,
+    walletAddress,
+    signFn,
     setLoading,
     setGamePhase,
     clearPosition,
@@ -229,10 +201,11 @@ export function useRetreat() {
 }
 
 export function usePositionMonitor() {
-  const { user } = useWalletInfo();
+  const { walletAddress } = usePacificaSigner();
   const {
     position,
     currentPrice,
+    selectedSymbol,
     setPosition,
     setGamePhase,
     clearPosition,
@@ -325,12 +298,11 @@ export function usePositionMonitor() {
 
       // Try to fetch real position from API
       try {
-        const walletAddress = user?.wallet?.address;
         if (!walletAddress) return;
 
         const { createPacificaClient: createClient } = await import('@/lib/pacifica');
         const client = createClient(walletAddress, async () => 'demo-sig');
-        const apiPosition = await client.getPosition('BTC-PERP');
+        const apiPosition = await client.getPosition(useGameStore.getState().selectedSymbol + '-PERP');
 
         if (apiPosition) {
           setPosition({
@@ -351,5 +323,5 @@ export function usePositionMonitor() {
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [user, setPosition, setGamePhase, clearPosition, addCombatLog, updateMissionProgress]);
+  }, [walletAddress, selectedSymbol, setPosition, setGamePhase, clearPosition, addCombatLog, updateMissionProgress]);
 }

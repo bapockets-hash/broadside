@@ -12,16 +12,64 @@ class BattleScene {
   [key: string]: any;
 }
 
+const COINGECKO_IDS: Record<string, string> = {
+  // Major crypto
+  BTC: 'bitcoin', ETH: 'ethereum', SOL: 'solana', BNB: 'binancecoin',
+  AVAX: 'avalanche-2', XRP: 'ripple', DOGE: 'dogecoin', ADA: 'cardano',
+  LINK: 'chainlink', SUI: 'sui', TON: 'the-open-network', NEAR: 'near',
+  ICP: 'internet-computer', TAO: 'bittensor', LTC: 'litecoin', BCH: 'bitcoin-cash',
+  XMR: 'monero', ZEC: 'zcash', PAXG: 'pax-gold', VIRTUAL: 'virtual-protocol',
+  // Meme / community
+  HYPE: 'hyperliquid', kPEPE: 'pepe', kBONK: 'bonk', TRUMP: 'official-trump',
+  WIF: 'dogwifcoin', PENGU: 'pudgy-penguins', FARTCOIN: 'fartcoin',
+  // DeFi
+  UNI: 'uniswap', AAVE: 'aave', CRV: 'curve-dao-token', LDO: 'lido-dao',
+  ARB: 'arbitrum', JUP: 'jupiter-exchange-solana', ENA: 'ethena',
+  ZK: 'zksync', STRK: 'starknet', ZRO: 'layerzero', WLD: 'worldcoin-wld',
+  LINEA: 'linea',
+  // Others with known CoinGecko IDs
+  URNM: 'sprott-uranium-miners-etf-trust',
+};
+
+const STOCK_LOGOS: Record<string, string> = {
+  TSLA: 'https://logo.clearbit.com/tesla.com',
+  NVDA: 'https://logo.clearbit.com/nvidia.com',
+  GOOGL: 'https://logo.clearbit.com/google.com',
+  PLTR: 'https://logo.clearbit.com/palantir.com',
+  HOOD: 'https://logo.clearbit.com/robinhood.com',
+};
+
 export default function BattleshipGame() {
   const containerRef = useRef<HTMLDivElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const gameRef = useRef<any>(null);
   const store = useGameStore();
   const storeRef = useRef(store);
+  const logoUrlsRef = useRef<Record<string, string>>({ ...STOCK_LOGOS });
 
   useEffect(() => {
     storeRef.current = store;
   });
+
+  // Fetch coin logos from CoinGecko once on mount
+  useEffect(() => {
+    const ids = Object.values(COINGECKO_IDS).join(',');
+    fetch(`https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${ids}&per_page=100`)
+      .then(r => r.json())
+      .then((coins: Array<{ id: string; image: string }>) => {
+        const idToSym = Object.fromEntries(
+          Object.entries(COINGECKO_IDS).map(([sym, id]) => [id, sym])
+        );
+        for (const coin of coins) {
+          const sym = idToSym[coin.id];
+          if (sym && coin.image) {
+            // Convert large → thumb for smaller file size
+            logoUrlsRef.current[sym] = coin.image.replace('/large/', '/thumb/');
+          }
+        }
+      })
+      .catch(() => { /* use text fallback */ });
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -71,8 +119,6 @@ export default function BattleshipGame() {
         private comboText!: any;
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        private btcSprite!: any;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         private hoverGraphics!: any;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         private hoverPriceLabel!: any;
@@ -88,6 +134,10 @@ export default function BattleshipGame() {
         private timeTickLabels: any[] = [];
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         private currentPriceLabel!: any;
+
+        private celestialZoneX = 0;
+        private celestialZoneY = 0;
+        private celestialZoneR = 0;
 
         private waveTime = 0;
         private shipRockTime = 0;
@@ -142,13 +192,92 @@ export default function BattleshipGame() {
         private shockwaves: { x: number; y: number; radius: number; maxRadius: number; life: number }[] = [];
         private debrisParticles: { x: number; y: number; vx: number; vy: number; life: number; w: number; h: number; color: number }[] = [];
 
+        // Weather system
+        private stormIntensity = 0; // 0=calm, 1=full storm
+        private rainDrops: { x: number; y: number; len: number; speed: number }[] = [];
+        private lightningAlpha = 0;
+        private lightningTimer = 0;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        private weatherGraphics!: any;
+
+        // Wake trail
+        private wakeParticles: { x: number; y: number; vx: number; life: number; size: number; alpha: number }[] = [];
+
+        // Hull sparks
+        private sparkParticles: { x: number; y: number; vx: number; vy: number; life: number }[] = [];
+
+        // Win/loss celebration
+        private coinParticles: { x: number; y: number; vx: number; vy: number; life: number; color: number; rot: number; rotSpeed: number }[] = [];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        private celebrationGraphics!: any;
+
+        // Symbol display on fortress
+        private selectedSymbol = 'BTC';
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        private symbolLabel!: any;   // text fallback
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        private symbolImage!: any;   // logo image (shown when loaded)
+        private symbolColorHex = 0xff6600;
+        private symbolLogoUrl: string | null = null;
+
+        private fmtPrice(price: number): string {
+          if (price >= 10000) return `$${Math.round(price).toLocaleString()}`;
+          if (price >= 1000) return `$${price.toFixed(1)}`;
+          if (price >= 100)  return `$${price.toFixed(2)}`;
+          if (price >= 1)    return `$${price.toFixed(3)}`;
+          if (price >= 0.01) return `$${price.toFixed(4)}`;
+          if (price >= 0.0001) return `$${price.toFixed(6)}`;
+          return `$${price.toExponential(2)}`;
+        }
+
+        private getSymbolColor(symbol: string): { colorHex: number; cssColor: string } {
+          const MEME = ['kPEPE', 'kBONK', 'FARTCOIN', 'TRUMP', 'WIF', 'PENGU', 'HYPE'];
+          const STOCKS = ['TSLA', 'NVDA', 'GOOGL', 'PLTR', 'HOOD'];
+          const COMMODITIES = ['XAU', 'XAG', 'CL', 'NATGAS', 'COPPER', 'PLATINUM'];
+          const FOREX = ['EURUSD', 'GBPUSD', 'USDJPY', 'USDKRW'];
+          const DEFI = ['UNI', 'AAVE', 'CRV', 'LDO', 'ARB', 'JUP'];
+          if (symbol === 'BTC') return { colorHex: 0xff6600, cssColor: '#ff6600' };
+          if (symbol === 'ETH') return { colorHex: 0x8899ff, cssColor: '#8899ff' };
+          if (MEME.includes(symbol)) return { colorHex: 0xff44ff, cssColor: '#ff44ff' };
+          if (STOCKS.includes(symbol)) return { colorHex: 0x44aaff, cssColor: '#44aaff' };
+          if (COMMODITIES.includes(symbol)) return { colorHex: 0xffd700, cssColor: '#ffd700' };
+          if (FOREX.includes(symbol)) return { colorHex: 0x00ff88, cssColor: '#00ff88' };
+          if (DEFI.includes(symbol)) return { colorHex: 0xaa44ff, cssColor: '#aa44ff' };
+          return { colorHex: 0x00d4ff, cssColor: '#00d4ff' };
+        }
+
+        private loadSymbolLogo(symbol: string, url: string) {
+          const key = `logo-${symbol}`;
+          if (this.textures.exists(key)) {
+            this.symbolImage.setTexture(key);
+            this.symbolImage.setScale(1.4);
+            this.symbolImage.setVisible(true);
+            this.symbolLabel.setVisible(false);
+            return;
+          }
+          // Show text while loading
+          this.symbolImage.setVisible(false);
+          this.symbolLabel.setVisible(true);
+          this.load.image(key, url);
+          this.load.once('complete', () => {
+            if (this.selectedSymbol === symbol && this.symbolImage) {
+              this.symbolImage.setTexture(key);
+              this.symbolImage.setScale(1.4);
+              this.symbolImage.setVisible(true);
+              this.symbolLabel.setVisible(false);
+            }
+          });
+          this.load.once('loaderror', () => {
+            // Keep text fallback on load error
+          });
+          this.load.start();
+        }
+
         constructor() {
           super({ key: 'BattleScene' });
         }
 
-        preload() {
-          this.load.image('btc-logo', '/btc-logo.png');
-        }
+        preload() {}
 
         create() {
           const { width, height } = this.scale;
@@ -189,14 +318,24 @@ export default function BattleshipGame() {
           this.fortressGraphics = this.add.graphics();
           this.fortressGraphics.setDepth(8);
 
-          // BTC logo sprite — centered on fortress body
+          // Symbol display — centered on fortress body
           const waterY = height * 0.68;
           const fortressX = width * 0.75;
           const fortressY = waterY - 65;
-          this.btcSprite = this.add.image(fortressX, fortressY + 10, 'btc-logo');
-          this.btcSprite.setScale(0.6);
-          this.btcSprite.setDepth(9);
-          this.btcSprite.setAlpha(0.92);
+          const initColor = this.getSymbolColor('BTC');
+          this.symbolColorHex = initColor.colorHex;
+          // Text fallback (visible until logo loads)
+          this.symbolLabel = this.add.text(fortressX, fortressY + 10, 'BTC', {
+            fontFamily: 'monospace',
+            fontSize: '28px',
+            color: initColor.cssColor,
+            fontStyle: 'bold',
+            stroke: '#000000',
+            strokeThickness: 3,
+          }).setOrigin(0.5, 0.5).setDepth(9).setAlpha(0.92);
+          // Logo image (hidden until loaded)
+          this.symbolImage = this.add.image(fortressX, fortressY + 10, '__DEFAULT')
+            .setOrigin(0.5, 0.5).setDepth(9).setAlpha(0.92).setVisible(false);
 
           // Particle layer
           this.particleGraphics = this.add.graphics();
@@ -213,6 +352,24 @@ export default function BattleshipGame() {
           // Scanline overlay (top-most)
           this.scanlineGraphics = this.add.graphics();
           this.scanlineGraphics.setDepth(50);
+
+          // Weather graphics (above sky, below parallax)
+          this.weatherGraphics = this.add.graphics();
+          this.weatherGraphics.setDepth(3);
+
+          // Celebration graphics
+          this.celebrationGraphics = this.add.graphics();
+          this.celebrationGraphics.setDepth(45);
+
+          // Init rain drops
+          for (let i = 0; i < 120; i++) {
+            this.rainDrops.push({
+              x: Math.random() * 1600,
+              y: Math.random() * 600,
+              len: 8 + Math.random() * 12,
+              speed: 8 + Math.random() * 6,
+            });
+          }
 
           // Price scale axis
           this.priceScaleGraphics = this.add.graphics();
@@ -290,6 +447,19 @@ export default function BattleshipGame() {
             strokeThickness: 1,
           }).setOrigin(0.5, 1).setDepth(23).setVisible(false);
 
+          // Celestial body (sun/moon) — interactive toggle for day/night
+          const celX = width * 0.82;
+          const celY = height * 0.12;
+          const celRadius = 30;
+          const celestialZone = this.add.zone(celX, celY, celRadius * 2, celRadius * 2);
+          celestialZone.setInteractive({ useHandCursor: true });
+          celestialZone.on('pointerdown', () => {
+            useGameStore.getState().toggleLightMode();
+          });
+          this.celestialZoneX = celX;
+          this.celestialZoneY = celY;
+          this.celestialZoneR = celRadius;
+
           // Pointer tracking — only update when not pinned
           this.input.on('pointermove', (pointer: { x: number; y: number }) => {
             if (!this.hoverPinned) {
@@ -305,21 +475,23 @@ export default function BattleshipGame() {
           });
           // Click in sea: pin/unpin. Click above water: dismiss.
           this.input.on('pointerdown', (pointer: { x: number; y: number }) => {
+            // Skip if clicking the celestial body (handled by its own zone)
+            const dx = pointer.x - this.celestialZoneX;
+            const dy = pointer.y - this.celestialZoneY;
+            if (Math.sqrt(dx * dx + dy * dy) < this.celestialZoneR) return;
+
             const wY = this.scale.height * 0.68;
             if (pointer.y > wY) {
               if (this.hoverPinned && Math.abs(pointer.x - this.pinnedX) < 24) {
-                // Second click near pin: unpin
                 this.hoverPinned = false;
                 this.pinnedX = -1;
               } else {
-                // Pin at this x
                 this.hoverPinned = true;
                 this.pinnedX = pointer.x;
                 this.hoverX = pointer.x;
                 this.hoverY = pointer.y;
               }
             } else {
-              // Clicked above waterline: dismiss
               this.hoverPinned = false;
               this.pinnedX = -1;
               this.hoverX = -1;
@@ -372,6 +544,8 @@ export default function BattleshipGame() {
             liquidationPrice: number;
             timeframe: string;
             lightMode: boolean;
+            selectedSymbol: string;
+            symbolLogoUrl: string | null;
           }) => {
             this.currentPrice = state.currentPrice;
             this.priceHistory = state.priceHistory;
@@ -380,6 +554,29 @@ export default function BattleshipGame() {
             this.timeframe = state.timeframe;
             this.lightMode = state.lightMode;
             this.marginHealth = state.marginHealth;
+
+            // Update fortress symbol display when market changes
+            if (state.selectedSymbol !== this.selectedSymbol || state.symbolLogoUrl !== this.symbolLogoUrl) {
+              this.selectedSymbol = state.selectedSymbol;
+              this.symbolLogoUrl = state.symbolLogoUrl;
+              const col = this.getSymbolColor(state.selectedSymbol);
+              this.symbolColorHex = col.colorHex;
+              // Update text fallback
+              if (this.symbolLabel) {
+                this.symbolLabel.setText(state.selectedSymbol.slice(0, 6));
+                this.symbolLabel.setStyle({ color: col.cssColor });
+                const fs = state.selectedSymbol.length <= 3 ? '32px' : state.selectedSymbol.length <= 5 ? '26px' : '20px';
+                this.symbolLabel.setFontSize(fs);
+                this.symbolLabel.setVisible(true);
+              }
+              if (this.symbolImage) {
+                this.symbolImage.setVisible(false);
+              }
+              // Load logo if URL available
+              if (state.symbolLogoUrl) {
+                this.loadSymbolLogo(state.selectedSymbol, state.symbolLogoUrl);
+              }
+            }
             this.unrealizedPnl = state.unrealizedPnl;
             this.entryPrice = state.entryPrice;
             this.positionSide = state.positionSide;
@@ -411,7 +608,7 @@ export default function BattleshipGame() {
             const prevPhase = this.gamePhase;
             this.gamePhase = state.gamePhase;
 
-            this.priceText.setText(`$${state.currentPrice.toLocaleString('en-US', { maximumFractionDigits: 0 })}`);
+            this.priceText.setText(this.fmtPrice(state.currentPrice));
 
             const phaseMessages: Record<string, string> = {
               idle: 'AWAITING ORDERS',
@@ -451,6 +648,17 @@ export default function BattleshipGame() {
               soundEngine.playExplosion();
             }
 
+            // Win/loss celebration when position closes
+            if (prevPhase === 'active' && state.gamePhase === 'idle') {
+              const closePnl = state.unrealizedPnl;
+              const { width: w, height: h } = this.scale;
+              if (closePnl > 0) {
+                this.triggerWinCelebration(closePnl, w, h);
+              } else if (closePnl < 0) {
+                this.triggerLossCelebration(closePnl, w);
+              }
+            }
+
             // Reset fortress damage when position closes
             if (state.gamePhase === 'idle' && prevPhase !== 'idle') {
               this.fortressDamage = 0;
@@ -487,6 +695,88 @@ export default function BattleshipGame() {
               h: 30 + Math.random() * 30,
               speed: 8 + Math.random() * 12,
             });
+          }
+        }
+
+        private computeVolatility(): number {
+          const prices = this.priceHistory;
+          if (prices.length < 5) return 0;
+          const changes = prices.slice(1).map((p, i) => Math.abs((p - prices[i]) / Math.max(prices[i], 1)));
+          const avg = changes.reduce((a, b) => a + b, 0) / changes.length;
+          return Math.min(1, avg / 0.008);
+        }
+
+        private drawWeather(width: number, height: number, time: number) {
+          this.weatherGraphics.clear();
+          const vol = this.stormIntensity;
+          if (vol < 0.2) return;
+
+          const waterY = height * 0.68;
+
+          // Storm clouds (dark rolling clouds at top)
+          const cloudAlpha = Math.min(0.85, (vol - 0.2) / 0.8 * 0.85);
+          const cloudCount = Math.floor(vol * 8) + 2;
+          for (let c = 0; c < cloudCount; c++) {
+            const cx = ((c / cloudCount) * width * 1.3 + time * 12) % (width + 200) - 100;
+            const cy = height * 0.05 + (c % 3) * 22;
+            const cw = 120 + (c % 3) * 60;
+            const ch = 28 + (c % 2) * 14;
+            const cloudColor = this.lightMode ? 0x607080 : 0x0a0f1a;
+            this.weatherGraphics.fillStyle(cloudColor, cloudAlpha);
+            this.weatherGraphics.fillEllipse(cx, cy, cw, ch);
+            this.weatherGraphics.fillEllipse(cx + 30, cy - 10, cw * 0.7, ch * 0.8);
+            this.weatherGraphics.fillEllipse(cx - 25, cy - 5, cw * 0.6, ch * 0.7);
+          }
+
+          // Rain streaks
+          const rainAlpha = Math.min(0.55, (vol - 0.3) / 0.7 * 0.55);
+          if (vol > 0.3) {
+            const rainColor = this.lightMode ? 0x4488aa : 0x4499cc;
+            this.weatherGraphics.lineStyle(1, rainColor, rainAlpha);
+            for (const drop of this.rainDrops) {
+              drop.y += drop.speed;
+              drop.x += drop.speed * 0.2;
+              if (drop.y > waterY + 20 || drop.x > width + 20) {
+                drop.y = -20;
+                drop.x = Math.random() * width;
+              }
+              this.weatherGraphics.beginPath();
+              this.weatherGraphics.moveTo(drop.x, drop.y);
+              this.weatherGraphics.lineTo(drop.x + 2, drop.y + drop.len);
+              this.weatherGraphics.strokePath();
+            }
+          }
+
+          // Lightning flash at very high volatility
+          if (vol > 0.7) {
+            this.lightningTimer -= 0.016;
+            if (this.lightningTimer <= 0) {
+              if (Math.random() < 0.008) {
+                this.lightningAlpha = 0.35;
+                this.lightningTimer = 3 + Math.random() * 5;
+
+                const lx = width * 0.3 + Math.random() * width * 0.5;
+                const bolt: { x: number; y: number }[] = [];
+                let bx = lx, by = 0;
+                while (by < waterY) {
+                  bolt.push({ x: bx, y: by });
+                  bx += (Math.random() - 0.5) * 30;
+                  by += 20 + Math.random() * 20;
+                }
+                this.weatherGraphics.lineStyle(2, 0xeeeeff, this.lightningAlpha);
+                if (bolt.length > 1) {
+                  this.weatherGraphics.beginPath();
+                  this.weatherGraphics.moveTo(bolt[0].x, bolt[0].y);
+                  for (const pt of bolt.slice(1)) this.weatherGraphics.lineTo(pt.x, pt.y);
+                  this.weatherGraphics.strokePath();
+                }
+              }
+            }
+            if (this.lightningAlpha > 0) {
+              this.lightningAlpha = Math.max(0, this.lightningAlpha - 0.04);
+              this.weatherGraphics.fillStyle(0xeeeeff, this.lightningAlpha * 0.15);
+              this.weatherGraphics.fillRect(0, 0, width, height);
+            }
           }
         }
 
@@ -534,6 +824,13 @@ export default function BattleshipGame() {
               this.bgGraphics.fillStyle(0x1a0505, 0.7);
               this.bgGraphics.fillEllipse(cx, cy, 80 + c * 15, 25);
             }
+          }
+
+          // Storm intensity overlay
+          if (this.stormIntensity > 0.3) {
+            const stormAlpha = Math.min(0.4, (this.stormIntensity - 0.3) / 0.7 * 0.4);
+            this.bgGraphics.fillStyle(0x050a12, stormAlpha);
+            this.bgGraphics.fillRect(0, 0, width, height);
           }
         }
 
@@ -860,6 +1157,37 @@ export default function BattleshipGame() {
             this.shipGraphics.fillTriangle(10, -4, 16, -4, 13, -16);
           }
 
+          if (health < 50) {
+            // Structural cracks radiating from damage points
+            this.shipGraphics.lineStyle(1, 0x000000, alpha * 0.8);
+            this.shipGraphics.beginPath();
+            this.shipGraphics.moveTo(-20, 5);
+            this.shipGraphics.lineTo(-28, -5);
+            this.shipGraphics.lineTo(-22, -12);
+            this.shipGraphics.strokePath();
+
+            this.shipGraphics.beginPath();
+            this.shipGraphics.moveTo(25, 3);
+            this.shipGraphics.lineTo(32, 12);
+            this.shipGraphics.strokePath();
+          }
+          if (health < 25) {
+            // Deep structural fractures
+            this.shipGraphics.lineStyle(1.5, 0x1a0000, alpha * 0.9);
+            this.shipGraphics.beginPath();
+            this.shipGraphics.moveTo(-40, -4);
+            this.shipGraphics.lineTo(-35, 10);
+            this.shipGraphics.lineTo(-28, 15);
+            this.shipGraphics.strokePath();
+
+            // Exposed hull interior (dark orange glow through cracks)
+            this.shipGraphics.lineStyle(1, 0xff4400, alpha * (0.3 + Math.sin(time * 6) * 0.2));
+            this.shipGraphics.beginPath();
+            this.shipGraphics.moveTo(-20, 5);
+            this.shipGraphics.lineTo(-28, -5);
+            this.shipGraphics.strokePath();
+          }
+
           this.shipGraphics.restore();
 
           // Emit smoke when damaged
@@ -956,20 +1284,25 @@ export default function BattleshipGame() {
           this.fortressGraphics.fillStyle(0x2a3a4a, 0.4);
           this.fortressGraphics.fillRect(x - 48 + lean, y - 52, 96, 8);
 
-          // --- BTC Symbol ---
-          const btcAlpha = dmg > 60
+          // --- Symbol label ---
+          const symAlpha = dmg > 60
             ? 0.3 + Math.random() * 0.5  // flickering when damaged
             : 1.0;
-          const pulseAlpha = btcAlpha * (0.7 + 0.3 * Math.sin(time * 2));
+          const pulseAlpha = symAlpha * (0.7 + 0.3 * Math.sin(time * 2));
 
-          // Orange glow halo behind BTC symbol
-          this.fortressGraphics.fillStyle(0xff6600, 0.12 + 0.06 * Math.sin(time * 2));
+          // Glow halo behind symbol (color matches asset category)
+          this.fortressGraphics.fillStyle(this.symbolColorHex, 0.12 + 0.06 * Math.sin(time * 2));
           this.fortressGraphics.fillCircle(x + lean * 0.5, y + 10, 40);
 
-          // BTC logo sprite — update alpha/position to match damage & lean
-          if (this.btcSprite) {
-            this.btcSprite.setAlpha(pulseAlpha * 0.92);
-            this.btcSprite.setX(x + lean * 0.5);
+          // Symbol display — update alpha/position to match damage & lean
+          const symX = x + lean * 0.5;
+          if (this.symbolLabel) {
+            this.symbolLabel.setAlpha(pulseAlpha * 0.92);
+            this.symbolLabel.setX(symX);
+          }
+          if (this.symbolImage) {
+            this.symbolImage.setAlpha(pulseAlpha * 0.92);
+            this.symbolImage.setX(symX);
           }
 
           // --- Cracks at damage thresholds ---
@@ -1136,19 +1469,23 @@ export default function BattleshipGame() {
 
           const minP = Math.min(...prices);
           const maxP = Math.max(...prices);
-          const priceRange = maxP - minP || 100;
+          const priceRange = maxP - minP || Math.max(minP * 0.002, 1e-8);
 
           const priceToY = (p: number) =>
             (waterY + chartDepth) - ((p - minP) / priceRange) * totalRange;
 
-          // Subtle living ripple layered on top
+          // Subtle living ripple layered on top (storm-driven choppiness)
+          const chopFactor = 1 + this.stormIntensity * 4;
           const ripple = (x: number) =>
-            Math.sin(x * 0.03 + time * 1.2) * 1.2 + Math.sin(x * 0.07 + time * 0.8) * 0.6;
+            Math.sin(x * 0.03 + time * 1.2 * (1 + this.stormIntensity)) * 1.2 * chopFactor +
+            Math.sin(x * 0.07 + time * 0.8) * 0.6 * chopFactor;
 
-          // Sparse control points
+          // Sparse control points — clamp y so the line never breaches the ocean surface
+          const chartTop = waterY - chartRise;
+          const chartBot = waterY + chartDepth;
           const ctrl: { x: number; y: number }[] = prices.map((p, i) => ({
             x: (i / (prices.length - 1)) * width,
-            y: priceToY(p) + ripple((i / (prices.length - 1)) * width),
+            y: Math.min(chartBot, Math.max(chartTop, priceToY(p) + ripple((i / (prices.length - 1)) * width))),
           }));
 
           // --- Catmull-Rom spline: generate dense smooth pts from control points ---
@@ -1169,6 +1506,11 @@ export default function BattleshipGame() {
             }
           }
           spline.push(ctrl[ctrl.length - 1]);
+
+          // Clamp interpolated points — spline can overshoot control points
+          for (const pt of spline) {
+            pt.y = Math.min(chartBot, Math.max(chartTop, pt.y));
+          }
 
           // Store for hover detection
           this.splinePoints = spline;
@@ -1309,7 +1651,7 @@ export default function BattleshipGame() {
           const prices = priceHistory.length >= 2 ? priceHistory : [currentPrice];
           const minP = Math.min(...prices);
           const maxP = Math.max(...prices);
-          const priceRange = maxP - minP || 100;
+          const priceRange = maxP - minP || Math.max(minP * 0.002, 1e-8);
 
           // Maps price → y (same formula as drawWaves)
           const priceToY = (p: number) =>
@@ -1349,7 +1691,7 @@ export default function BattleshipGame() {
 
             const label = this.priceScaleLabels[i];
             if (label) {
-              label.setText(`$${Math.round(tickPrice).toLocaleString()}`);
+              label.setText(this.fmtPrice(tickPrice));
               label.setPosition(axisX - 6, tickY);
             }
           }
@@ -1379,7 +1721,7 @@ export default function BattleshipGame() {
           // Current price badge
           if (this.currentPriceLabel) {
             this.currentPriceLabel.setFontSize('11px');
-            this.currentPriceLabel.setText(`$${Math.round(currentPrice).toLocaleString()}`);
+            this.currentPriceLabel.setText(this.fmtPrice(currentPrice));
             this.currentPriceLabel.setPosition(axisX - 4, curY);
             this.currentPriceLabel.setColor('#ffffff');
             this.currentPriceLabel.setBackgroundColor(markerHex);
@@ -1400,32 +1742,42 @@ export default function BattleshipGame() {
           // Hide all labels first, then show the ones that fit
           for (const lbl of this.timeTickLabels) lbl.setVisible(false);
 
-          // One tick per candle boundary — each priceTimestamp IS a candle open time
-          const minLabelSpacing = 34; // px minimum between label centres
+          // Minimum px between label centres — wide enough that labels never overlap.
+          // Each label is at most ~45px wide at the 9px font size used below.
+          const minLabelSpacing = 64;
           let lastLabelX = -minLabelSpacing;
           let labelIdx = 0;
+
+          const DAY_ABBR = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
           for (let i = 0; i < n; i++) {
             const tickX = n > 1 ? (i / (n - 1)) * width : 0;
             const ts = timestamps[i];
 
-            // Tick mark — taller every 5 candles for readability
-            const isMajor = i % 5 === 0 || i === n - 1;
-            this.priceScaleGraphics.lineStyle(1, 0x1a3a5c, isMajor ? 0.85 : 0.4);
-            this.priceScaleGraphics.beginPath();
-            this.priceScaleGraphics.moveTo(tickX, timeAxisY);
-            this.priceScaleGraphics.lineTo(tickX, timeAxisY - (isMajor ? 6 : 3));
-            this.priceScaleGraphics.strokePath();
-
-            // Label only where there is enough horizontal room
+            // Only draw tick marks at label positions to reduce visual noise
             if (ts && tickX - lastLabelX >= minLabelSpacing && labelIdx < this.timeTickLabels.length) {
+              // Tick mark
+              this.priceScaleGraphics.lineStyle(1, 0x1a3a5c, 0.85);
+              this.priceScaleGraphics.beginPath();
+              this.priceScaleGraphics.moveTo(tickX, timeAxisY);
+              this.priceScaleGraphics.lineTo(tickX, timeAxisY - 6);
+              this.priceScaleGraphics.strokePath();
+
               const d = new Date(ts);
               const h24 = d.getHours();
               const h12 = h24 % 12 || 12;
               const ampm = h24 < 12 ? 'AM' : 'PM';
               const mm = d.getMinutes().toString().padStart(2, '0');
+              let labelText: string;
+              if (this.timeframe === '60m') {
+                // For hourly candles, show day so context is visible across multiple days
+                labelText = `${DAY_ABBR[d.getDay()]} ${h12}${ampm}`;
+              } else {
+                labelText = `${h12}:${mm}${ampm}`;
+              }
+
               const lbl = this.timeTickLabels[labelIdx++];
-              lbl.setText(`${h12}:${mm}${ampm}`);
+              lbl.setText(labelText);
               lbl.setPosition(tickX, timeAxisY - 16);
               lbl.setVisible(true);
               lastLabelX = tickX;
@@ -1503,7 +1855,7 @@ export default function BattleshipGame() {
           this.hoverGraphics.fillCircle(nearest.x, nearest.y, 1.5);
 
           // Price label — keep inside canvas bounds
-          const labelText = `$${Math.round(price).toLocaleString()}`;
+          const labelText = this.fmtPrice(price);
           const labelOffX = nearest.x + 10 > width - 75 ? -10 : 10;
           const labelOriginX = labelOffX > 0 ? 0 : 1;
           const labelY = Math.max(waterY + 4, nearest.y - 16);
@@ -1568,7 +1920,7 @@ export default function BattleshipGame() {
 
           const minP = Math.min(...this.priceHistory);
           const maxP = Math.max(...this.priceHistory);
-          const visibleRange = Math.max(maxP - minP, 200);
+          const visibleRange = Math.max(maxP - minP, Math.max(minP * 0.005, 1e-8));
 
           const priceToY = (price: number) => {
             return waterY - ((price - minP) / visibleRange) * waveHeight;
@@ -1716,6 +2068,42 @@ export default function BattleshipGame() {
           }
         }
 
+        private emitWake(x: number, y: number, speed: number) {
+          if (Math.random() > 0.4) return;
+          const size = 3 + Math.random() * 4 + speed * 2;
+          this.wakeParticles.push({
+            x: x - 72 + (Math.random() - 0.5) * 8,
+            y: y + 8 + (Math.random() - 0.5) * 4,
+            vx: -0.3 - Math.random() * 0.5,
+            life: 1.0,
+            size,
+            alpha: 0.4 + speed * 0.1,
+          });
+          this.wakeParticles.push({
+            x: x - 82 - Math.random() * 15,
+            y: y + 8 + (Math.random() - 0.5) * 3,
+            vx: -0.5 - Math.random() * 0.8,
+            life: 0.8,
+            size: size * 0.7,
+            alpha: 0.25,
+          });
+          if (this.wakeParticles.length > 60) this.wakeParticles.shift();
+        }
+
+        private emitSparks(x: number, y: number) {
+          if (Math.random() > 0.08) return;
+          for (let i = 0; i < 3; i++) {
+            this.sparkParticles.push({
+              x: x + (Math.random() - 0.5) * 30,
+              y: y + (Math.random() - 0.5) * 15,
+              vx: (Math.random() - 0.5) * 3,
+              vy: -1 - Math.random() * 2,
+              life: 0.5 + Math.random() * 0.3,
+            });
+          }
+          if (this.sparkParticles.length > 50) this.sparkParticles.splice(0, 20);
+        }
+
         private spawnFloatingText(text: string, x: number, y: number, color: number) {
           const { width } = this.scale;
           const clampX = Math.max(40, Math.min(width - 40, x));
@@ -1817,6 +2205,46 @@ export default function BattleshipGame() {
             d.life -= 0.02;
             this.particleGraphics.fillStyle(d.color, d.life * 0.9);
             this.particleGraphics.fillRect(d.x, d.y, d.w, d.h);
+          });
+
+          // Wake particles
+          this.wakeParticles = this.wakeParticles.filter(p => p.life > 0);
+          this.wakeParticles.forEach(p => {
+            p.x += p.vx;
+            p.life -= 0.018;
+            p.size += 0.08;
+            this.particleGraphics.fillStyle(0xaaddff, p.life * p.alpha * 0.6);
+            this.particleGraphics.fillEllipse(p.x, p.y, p.size * 2, p.size * 0.5);
+          });
+
+          // Spark particles
+          this.sparkParticles = this.sparkParticles.filter(p => p.life > 0);
+          this.sparkParticles.forEach(p => {
+            p.x += p.vx;
+            p.y += p.vy;
+            p.vy += 0.15;
+            p.life -= 0.04;
+            const sparkColor = p.life > 0.3 ? 0xffff00 : 0xff8800;
+            this.particleGraphics.fillStyle(sparkColor, p.life * 1.5);
+            this.particleGraphics.fillCircle(p.x, p.y, 1.5 + p.life);
+          });
+
+          // Coin particles (win celebration)
+          this.celebrationGraphics.clear();
+          this.coinParticles = this.coinParticles.filter(p => p.life > 0);
+          this.coinParticles.forEach(p => {
+            p.x += p.vx;
+            p.y += p.vy;
+            p.vy += 0.12; // gravity
+            p.vx *= 0.99;
+            p.life -= 0.015;
+            p.rot += p.rotSpeed;
+            this.celebrationGraphics.fillStyle(p.color, p.life * 0.9);
+            this.celebrationGraphics.save();
+            this.celebrationGraphics.translateCanvas(p.x, p.y);
+            this.celebrationGraphics.rotateCanvas(p.rot);
+            this.celebrationGraphics.fillEllipse(0, 0, 8, 5);
+            this.celebrationGraphics.restore();
           });
         }
 
@@ -1936,58 +2364,56 @@ export default function BattleshipGame() {
             }
           };
 
-          this.tweens.add({
-            targets: cannonBall,
-            x: fortressX,
-            y: this.shipY - 30,
-            ease: 'Sine.easeOut',
-            duration: 800,
-            onUpdate: () => {
-              trailPositions.unshift({ x: cannonBall.x, y: cannonBall.y });
-              if (trailPositions.length > maxTrail) trailPositions.pop();
+          const startX = shipX + 55;
+          const startY = this.shipY - 5;
+          const endX = fortressX;
+          const endY = this.shipY - 30;
+          const arcHeight = 80;
+          const duration = 800;
+          const startTime = this.time.now;
 
-              trailGraphics.clear();
-              trailPositions.forEach((tp, idx) => {
-                const trailAlpha = (0.8 * (1 - idx / maxTrail));
-                const trailRadius = 4 * (1 - idx / maxTrail);
-                const trailColor = idx < maxTrail / 2 ? 0xffaa00 : 0xff4400;
-                trailGraphics.fillStyle(trailColor, trailAlpha);
-                trailGraphics.fillCircle(tp.x, tp.y, trailRadius);
-              });
-            },
-            onComplete: () => {
+          const updateBall = () => {
+            const elapsed = this.time.now - startTime;
+            const progress = Math.min(1, elapsed / duration);
+
+            // Parabolic arc: y offset = -arcHeight * 4 * t * (1 - t)
+            cannonBall.x = startX + (endX - startX) * progress;
+            cannonBall.y = startY + (endY - startY) * progress - arcHeight * 4 * progress * (1 - progress);
+
+            // trail
+            trailPositions.unshift({ x: cannonBall.x, y: cannonBall.y });
+            if (trailPositions.length > maxTrail) trailPositions.pop();
+            trailGraphics.clear();
+            trailPositions.forEach((tp, idx) => {
+              const trailAlpha = 0.8 * (1 - idx / maxTrail);
+              const trailRadius = 4 * (1 - idx / maxTrail);
+              const trailColor = idx < maxTrail / 2 ? 0xffaa00 : 0xff4400;
+              trailGraphics.fillStyle(trailColor, trailAlpha);
+              trailGraphics.fillCircle(tp.x, tp.y, trailRadius);
+            });
+
+            if (progress >= 1) {
+              this.events.off('update', updateBall);
               cannonBall.destroy();
               trailGraphics.destroy();
               createSplash();
-              // Impact flash
+              // impact flash
               const impactFlash = this.add.graphics();
               impactFlash.fillStyle(0xff8800, 0.9);
               impactFlash.fillCircle(0, 0, 20);
               impactFlash.x = fortressX;
               impactFlash.y = this.shipY - 30;
               impactFlash.setDepth(22);
-              this.tweens.add({
-                targets: impactFlash,
-                alpha: 0,
-                scaleX: 3,
-                scaleY: 3,
-                duration: 300,
-                onComplete: () => impactFlash.destroy(),
-              });
-
-              // Screen flash (brief white overlay)
+              this.tweens.add({ targets: impactFlash, alpha: 0, scaleX: 3, scaleY: 3, duration: 300, onComplete: () => impactFlash.destroy() });
+              // screen flash
               const screenFlash = this.add.graphics();
               screenFlash.fillStyle(0xffffff, 0.25);
               screenFlash.fillRect(0, 0, this.scale.width, this.scale.height);
               screenFlash.setDepth(48);
-              this.tweens.add({
-                targets: screenFlash,
-                alpha: 0,
-                duration: 200,
-                onComplete: () => screenFlash.destroy(),
-              });
-            },
-          });
+              this.tweens.add({ targets: screenFlash, alpha: 0, duration: 200, onComplete: () => screenFlash.destroy() });
+            }
+          };
+          this.events.on('update', updateBall);
 
           this.cameras.main.shake(200, 0.008);
 
@@ -2094,6 +2520,42 @@ export default function BattleshipGame() {
           this.cameras.main.shake(500, 0.025);
         }
 
+        private triggerWinCelebration(pnl: number, width: number, height: number) {
+          const shipX = width * 0.2;
+          const coinColors = [0xffd700, 0xffcc00, 0xff8800, 0xffee44];
+          for (let i = 0; i < 40; i++) {
+            const angle = -Math.PI * 0.5 + (Math.random() - 0.5) * Math.PI;
+            const speed = 3 + Math.random() * 6;
+            this.coinParticles.push({
+              x: shipX + (Math.random() - 0.5) * 40,
+              y: this.shipY - 10,
+              vx: Math.cos(angle) * speed,
+              vy: Math.sin(angle) * speed - 2,
+              life: 1.0,
+              color: coinColors[Math.floor(Math.random() * coinColors.length)],
+              rot: Math.random() * Math.PI * 2,
+              rotSpeed: (Math.random() - 0.5) * 0.3,
+            });
+          }
+          this.spawnFloatingText(`+$${pnl.toFixed(2)} VICTORY!`, width * 0.5, height * 0.4, 0xffd700);
+          this.spawnFloatingText('TREASURE SECURED', width * 0.5, height * 0.4 + 24, 0x00ff88);
+          const winFlash = this.add.graphics();
+          winFlash.fillStyle(0xffd700, 0.2);
+          winFlash.fillRect(0, 0, width, height);
+          winFlash.setDepth(47);
+          this.tweens.add({ targets: winFlash, alpha: 0, duration: 600, onComplete: () => winFlash.destroy() });
+          this.cameras.main.shake(300, 0.006);
+        }
+
+        private triggerLossCelebration(pnl: number, width: number) {
+          this.spawnFloatingText(`RETREAT! $${pnl.toFixed(2)}`, width * 0.5, this.shipY - 60, 0xff8800);
+          const lossFlash = this.add.graphics();
+          lossFlash.fillStyle(0xff0000, 0.15);
+          lossFlash.fillRect(0, 0, width, this.scale.height);
+          lossFlash.setDepth(47);
+          this.tweens.add({ targets: lossFlash, alpha: 0, duration: 800, onComplete: () => lossFlash.destroy() });
+        }
+
         update(time: number, delta: number) {
           const { width, height } = this.scale;
           this.waveTime += delta * 0.001;
@@ -2101,6 +2563,10 @@ export default function BattleshipGame() {
           this.frameCount++;
 
           const currentStore = storeRef.current;
+
+          // Smooth storm intensity from volatility
+          const rawVol = this.computeVolatility();
+          this.stormIntensity += (rawVol - this.stormIntensity) * 0.01;
 
           // Animate crosshair progress when aiming
           if (this.gamePhase === 'aiming') {
@@ -2117,6 +2583,9 @@ export default function BattleshipGame() {
 
           // Draw parallax layers (stars, fog, cliffs, lighthouse, moon)
           this.drawParallaxLayers(width, height, this.waveTime, delta);
+
+          // Draw weather effects
+          this.drawWeather(width, height, this.waveTime);
 
           // Draw price zones overlay (before waves)
           this.drawPriceZones(width, height);
@@ -2149,6 +2618,15 @@ export default function BattleshipGame() {
             this.sinkProgress,
             this.waveTime
           );
+
+          // Emit wake — faster/wider when profitable
+          const wakeSpeed = this.gamePhase === 'active' && this.unrealizedPnl > 0 ? 1.5 : 0.5;
+          this.emitWake(shipX + rockX, this.shipY + rockY, wakeSpeed);
+
+          // Emit sparks when hull is critically damaged
+          if (this.marginHealth < 40) {
+            this.emitSparks(shipX + rockX + (Math.random() - 0.5) * 60, this.shipY + rockY - 5);
+          }
 
           // Draw fortress
           const fortressX = width * 0.75;
@@ -2245,6 +2723,8 @@ export default function BattleshipGame() {
       liquidationPrice: store.position?.liquidationPrice ?? 0,
       timeframe: store.timeframe,
       lightMode: store.lightMode,
+      selectedSymbol: store.selectedSymbol,
+      symbolLogoUrl: logoUrlsRef.current[store.selectedSymbol] ?? null,
     });
 
     // Fire torpedo when price moves against position
@@ -2256,7 +2736,7 @@ export default function BattleshipGame() {
         game.events.emit('torpedo');
       }
     }
-  }, [store.currentPrice, store.gamePhase, store.position, store.priceHistory, store.volumeHistory, store.combo, store.timeframe, store.lightMode]);
+  }, [store.currentPrice, store.gamePhase, store.position, store.priceHistory, store.volumeHistory, store.combo, store.timeframe, store.lightMode, store.selectedSymbol]);
 
   return (
     <div

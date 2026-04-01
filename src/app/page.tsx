@@ -11,6 +11,7 @@ import HUD from '@/components/game/HUD';
 import Leaderboard from '@/components/game/Leaderboard';
 import AdmiralPanel from '@/components/game/AdmiralPanel';
 import TimeframeSelector from '@/components/game/TimeframeSelector';
+import ConnectWallet from '@/components/ConnectWallet';
 
 // Dynamic import for Phaser to avoid SSR issues
 const BattleshipGame = dynamic(
@@ -29,8 +30,12 @@ const BattleshipGame = dynamic(
 );
 
 function GameContent() {
-  const { setCurrentPrice, addPriceHistory } = useGameStore();
+  const { setCurrentPrice, addPriceHistory, setMarketStats, setAllMarketPrices } = useGameStore();
   const wsRef = useRef<ReturnType<typeof createPriceWebSocket> | null>(null);
+  // True once Pacifica all-market data has arrived — onPrice becomes a no-op
+  // because setAllMarketPrices already handles currentPrice + priceHistory for
+  // the selected symbol. onPrice is only needed for the Binance/simulation fallback.
+  const pacificaActiveRef = useRef(false);
 
   const fireCannons = useFireCannons();
   const retreat = useRetreat();
@@ -39,10 +44,24 @@ function GameContent() {
 
   // Always start price feed — WebSocket with fallback to simulation
   useEffect(() => {
-    const ws = createPriceWebSocket('BTC-PERP', (price) => {
-      setCurrentPrice(price);
-      addPriceHistory(price);
-    });
+    pacificaActiveRef.current = false;
+
+    const ws = createPriceWebSocket(
+      'BTC-PERP',
+      (price) => {
+        // Skip when Pacifica all-market feed is active — setAllMarketPrices
+        // handles price history for whatever symbol is selected. Using this
+        // callback too would inject BTC prices into non-BTC chart buffers.
+        if (pacificaActiveRef.current) return;
+        setCurrentPrice(price);
+        addPriceHistory(price);
+      },
+      (stats) => setMarketStats(stats),
+      (entries) => {
+        pacificaActiveRef.current = true;
+        setAllMarketPrices(entries);
+      },
+    );
 
     ws.connect();
     wsRef.current = ws;
@@ -51,7 +70,7 @@ function GameContent() {
       ws.disconnect();
       wsRef.current = null;
     };
-  }, [setCurrentPrice, addPriceHistory]);
+  }, [setCurrentPrice, addPriceHistory, setMarketStats, setAllMarketPrices]);
 
   return (
     <div
@@ -91,6 +110,7 @@ function GameContent() {
 export default function Home() {
   return (
     <div className="h-full">
+      <ConnectWallet />
       <GameContent />
     </div>
   );

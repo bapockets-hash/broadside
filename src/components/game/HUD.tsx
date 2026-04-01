@@ -3,6 +3,8 @@
 import { useGameStore } from '@/store/gameStore';
 import { useEffect, useRef, useState } from 'react';
 import { soundEngine } from '@/lib/soundEngine';
+import ShareModal from './ShareModal';
+import BuilderApprovalModal from './BuilderApprovalModal';
 
 function useRollingNumber(target: number, duration = 300) {
   const [display, setDisplay] = useState(target);
@@ -76,9 +78,29 @@ export default function HUD() {
     gamePhase,
     combo,
     lightMode,
-    toggleLightMode,
+    marketStats,
+    selectedSymbol,
   } = useGameStore();
 
+  // Share modal state
+  const [shareData, setShareData] = useState<{ pnl: number; side: 'long' | 'short'; entryPrice: number; exitPrice: number } | null>(null);
+
+  // Rank-up detection
+  const rank = useGameStore(s => s.rank);
+  const prevRankRef = useRef(rank);
+  const [rankUpRank, setRankUpRank] = useState<string | null>(null);
+  const [rankUpVisible, setRankUpVisible] = useState(false);
+
+  useEffect(() => {
+    if (prevRankRef.current !== rank && prevRankRef.current !== '') {
+      setRankUpRank(rank);
+      setRankUpVisible(true);
+      const timer = setTimeout(() => setRankUpVisible(false), 3500);
+      prevRankRef.current = rank;
+      return () => clearTimeout(timer);
+    }
+    prevRankRef.current = rank;
+  }, [rank]);
 
   // P&L rolling counter
   const pnlTarget = position?.unrealizedPnl ?? 0;
@@ -102,7 +124,11 @@ export default function HUD() {
   const { toast: missionToast, slidingOut } = useMissionToast();
 
   const marginHealth = position?.marginHealth ?? 100;
-  const healthColor = marginHealth > 60 ? '#00ff88' : marginHealth > 30 ? '#ffd700' : '#ff3333';
+  const healthColor = marginHealth > 60
+    ? (lightMode ? '#007744' : '#00ff88')
+    : marginHealth > 30
+    ? (lightMode ? '#aa7700' : '#ffd700')
+    : (lightMode ? '#cc2222' : '#ff3333');
 
   const phaseLabels: Record<string, string> = {
     idle: 'AWAITING ORDERS',
@@ -114,26 +140,36 @@ export default function HUD() {
   };
 
   const phaseColors: Record<string, string> = {
-    idle: '#00d4ff',
-    aiming: '#ffd700',
-    firing: '#ff8800',
-    active: '#00ff88',
-    retreating: '#ff8800',
-    sunk: '#ff3333',
+    idle: lightMode ? '#0055aa' : '#00d4ff',
+    aiming: lightMode ? '#8a6200' : '#ffd700',
+    firing: lightMode ? '#cc6600' : '#ff8800',
+    active: lightMode ? '#007744' : '#00ff88',
+    retreating: lightMode ? '#cc6600' : '#ff8800',
+    sunk: lightMode ? '#cc2222' : '#ff3333',
   };
 
-  // Mock ticker values based on currentPrice
+  const fundingPct = marketStats ? (marketStats.funding * 100).toFixed(4) : null;
+  const oiUsd = marketStats ? (marketStats.openInterest * currentPrice / 1e6).toFixed(2) : null;
+  const vol24hM = marketStats ? (marketStats.volume24h / 1e6).toFixed(2) : null;
+  const fmtPrice = (p: number) => {
+    if (p >= 10000) return `$${Math.round(p).toLocaleString()}`;
+    if (p >= 1000)  return `$${p.toFixed(1)}`;
+    if (p >= 100)   return `$${p.toFixed(2)}`;
+    if (p >= 1)     return `$${p.toFixed(3)}`;
+    if (p >= 0.01)  return `$${p.toFixed(4)}`;
+    if (p >= 0.0001) return `$${p.toFixed(6)}`;
+    return `$${p.toExponential(2)}`;
+  };
   const tickerItems = [
-    `BTC $${currentPrice.toLocaleString('en-US', { maximumFractionDigits: 0 })}`,
-    `24H ${currentPrice > 65000 ? '+' : '-'}${(Math.abs((currentPrice - 65000) / 65000) * 100).toFixed(2)}%`,
-    'FUNDING 0.01%',
-    'OPEN INT $2.1B',
-    'VOL 24H $1.2B',
-    `BTC $${currentPrice.toLocaleString('en-US', { maximumFractionDigits: 0 })}`,
+    `${selectedSymbol}-PERP ${fmtPrice(currentPrice)}`,
+    fundingPct !== null ? `FUNDING ${fundingPct}%` : 'FUNDING —',
+    oiUsd !== null ? `OI $${oiUsd}M` : 'OI —',
+    vol24hM !== null ? `VOL 24H $${vol24hM}M` : 'VOL 24H —',
+    'POWERED BY PACIFICA',
   ];
   const tickerText = tickerItems.join('  |  ');
 
-  const pnlColor = pnlTarget >= 0 ? '#00ff88' : '#ff3333';
+  const pnlColor = pnlTarget >= 0 ? (lightMode ? '#007744' : '#00ff88') : (lightMode ? '#cc2222' : '#ff3333');
   const pnlFlashAnim = pnlFlash === 'up'
     ? 'pnl-flash-green 0.4s ease-in-out'
     : pnlFlash === 'down'
@@ -150,29 +186,6 @@ export default function HUD() {
   return (
     <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 10 }}>
 
-      {/* Day/Night toggle */}
-      <button
-        onClick={toggleLightMode}
-        className="pointer-events-auto"
-        style={{
-          position: 'absolute',
-          top: '26px',
-          right: '12px',
-          zIndex: 30,
-          background: lightMode ? 'rgba(255,255,255,0.85)' : 'rgba(5,15,30,0.85)',
-          border: lightMode ? '1px solid rgba(0,100,200,0.4)' : '1px solid rgba(0,212,255,0.4)',
-          borderRadius: '6px',
-          padding: '4px 8px',
-          cursor: 'pointer',
-          fontFamily: 'monospace',
-          fontSize: '14px',
-          color: lightMode ? '#1a2a3a' : '#00d4ff',
-          lineHeight: 1,
-        }}
-        title={lightMode ? 'Switch to Night' : 'Switch to Day'}
-      >
-        {lightMode ? '🌙' : '☀️'}
-      </button>
 
       {/* CRT scanline overlay */}
       <div className="scanline-overlay" />
@@ -181,10 +194,12 @@ export default function HUD() {
       <div
         className="absolute top-0 left-0 right-0 overflow-hidden pointer-events-none"
         style={{
-          height: '18px',
+          height: '20px',
           background: 'rgba(5,15,30,0.9)',
           borderBottom: '1px solid rgba(0,212,255,0.2)',
           zIndex: 20,
+          display: 'flex',
+          alignItems: 'center',
         }}
       >
         <div
@@ -195,7 +210,7 @@ export default function HUD() {
             fontFamily: 'monospace',
             fontSize: '10px',
             color: '#00d4ff',
-            lineHeight: '18px',
+            lineHeight: 1,
             paddingLeft: '8px',
           }}
         >
@@ -250,7 +265,7 @@ export default function HUD() {
           className="px-2 py-1 rounded text-xs panel-corners glass-panel"
           style={{ fontFamily: 'var(--font-share-tech-mono, monospace)' }}
         >
-          <div className="text-xs mb-1 font-orbitron" style={{ color: '#00d4ff', letterSpacing: '0.1em', fontFamily: 'var(--font-orbitron, monospace)' }}>
+          <div className="text-xs mb-1 font-orbitron" style={{ color: lightMode ? '#0055aa' : '#00d4ff', letterSpacing: '0.1em', fontFamily: 'var(--font-orbitron, monospace)' }}>
             HULL INTEGRITY
           </div>
           <div className="flex items-center gap-2">
@@ -287,9 +302,9 @@ export default function HUD() {
           </div>
 
           {position && (
-            <div className="mt-1 text-xs" style={{ color: '#888' }}>
-              LIQ: <span style={{ color: '#ff8800' }}>
-                ${position.liquidationPrice.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+            <div className="mt-1 text-xs" style={{ color: lightMode ? '#445566' : '#888' }}>
+              LIQ: <span style={{ color: '#cc6600' }}>
+                {fmtPrice(position.liquidationPrice)}
               </span>
             </div>
           )}
@@ -317,9 +332,9 @@ export default function HUD() {
             <div
               className="px-3 py-0.5 rounded-full text-xs font-bold font-mono"
               style={{
-                background: 'rgba(255,215,0,0.15)',
-                border: '1px solid #ffd700',
-                color: '#ffd700',
+                background: lightMode ? 'rgba(138,98,0,0.12)' : 'rgba(255,215,0,0.15)',
+                border: lightMode ? '1px solid #8a6200' : '1px solid #ffd700',
+                color: lightMode ? '#8a6200' : '#ffd700',
                 animation: 'combo-pulse 1s ease-in-out infinite',
                 letterSpacing: '0.05em',
               }}
@@ -340,12 +355,12 @@ export default function HUD() {
               minWidth: '140px',
             }}
           >
-            <div className="text-xs mb-1 font-orbitron" style={{ color: '#00d4ff', letterSpacing: '0.1em', fontFamily: 'var(--font-orbitron, monospace)' }}>
+            <div className="text-xs mb-1 font-orbitron" style={{ color: lightMode ? '#0055aa' : '#00d4ff', letterSpacing: '0.1em', fontFamily: 'var(--font-orbitron, monospace)' }}>
               ACTIVE POSITION
             </div>
             <div className="space-y-0.5">
               <div className="flex justify-between gap-3">
-                <span style={{ color: '#888' }}>SIDE</span>
+                <span style={{ color: lightMode ? '#445566' : '#888' }}>SIDE</span>
                 <span
                   style={{ color: position.side === 'long' ? '#00ff88' : '#ff3333' }}
                   className="font-bold"
@@ -354,24 +369,24 @@ export default function HUD() {
                 </span>
               </div>
               <div className="flex justify-between gap-3">
-                <span style={{ color: '#888' }}>LEV</span>
-                <span style={{ color: '#ffd700' }}>{position.leverage}x</span>
+                <span style={{ color: lightMode ? '#445566' : '#888' }}>LEV</span>
+                <span style={{ color: lightMode ? '#8a6200' : '#c8940a' }}>{position.leverage}x</span>
               </div>
               <div className="flex justify-between gap-3">
-                <span style={{ color: '#888' }}>ENTRY</span>
-                <span style={{ color: '#aaa' }}>
-                  ${position.entryPrice.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                <span style={{ color: lightMode ? '#445566' : '#888' }}>ENTRY</span>
+                <span style={{ color: lightMode ? '#1a2a3a' : '#aaa' }}>
+                  {fmtPrice(position.entryPrice)}
                 </span>
               </div>
               <div className="flex justify-between gap-3">
-                <span style={{ color: '#888' }}>SIZE</span>
-                <span style={{ color: '#aaa' }}>${position.size}</span>
+                <span style={{ color: lightMode ? '#445566' : '#888' }}>SIZE</span>
+                <span style={{ color: lightMode ? '#1a2a3a' : '#aaa' }}>${position.size}</span>
               </div>
               <div
                 className="flex justify-between gap-3 border-t mt-1 pt-1"
-                style={{ borderColor: 'rgba(0,212,255,0.2)' }}
+                style={{ borderColor: lightMode ? 'rgba(0,100,200,0.25)' : 'rgba(0,212,255,0.2)' }}
               >
-                <span style={{ color: '#888' }}>PnL</span>
+                <span style={{ color: lightMode ? '#445566' : '#888' }}>PnL</span>
                 <span
                   className="font-bold"
                   style={{
@@ -394,6 +409,20 @@ export default function HUD() {
                 </span>
               </div>
             </div>
+            {gamePhase === 'active' && (
+              <button
+                onClick={() => position && setShareData({
+                  pnl: position.unrealizedPnl,
+                  side: position.side,
+                  entryPrice: position.entryPrice,
+                  exitPrice: currentPrice,
+                })}
+                className="pointer-events-auto"
+                style={{ marginTop: '4px', width: '100%', padding: '3px', borderRadius: '4px', border: '1px solid rgba(0,212,255,0.25)', background: 'rgba(0,212,255,0.06)', color: '#00d4ff', cursor: 'pointer', fontSize: '9px', fontFamily: 'monospace', letterSpacing: '0.1em' }}
+              >
+                SHARE BATTLE
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -440,6 +469,50 @@ export default function HUD() {
           </div>
         </div>
       )}
+
+      {/* Rank-up ceremony overlay */}
+      {rankUpVisible && rankUpRank && (
+        <div
+          className="absolute inset-0 flex items-center justify-center pointer-events-none"
+          style={{ zIndex: 45 }}
+        >
+          <div
+            style={{
+              background: 'rgba(5,10,20,0.92)',
+              border: '2px solid #ffd700',
+              borderRadius: '8px',
+              padding: '24px 48px',
+              textAlign: 'center',
+              boxShadow: '0 0 60px rgba(255,215,0,0.4), 0 0 120px rgba(255,215,0,0.15)',
+              animation: 'rank-up-entrance 0.5s cubic-bezier(0.34,1.56,0.64,1) forwards',
+            }}
+          >
+            <div style={{ color: '#ffd700', fontSize: '11px', letterSpacing: '0.3em', fontFamily: 'var(--font-orbitron, monospace)', marginBottom: '8px' }}>
+              PROMOTION
+            </div>
+            <div style={{ color: '#ffffff', fontSize: '22px', fontWeight: 'bold', fontFamily: 'var(--font-orbitron, monospace)', letterSpacing: '0.1em', textShadow: '0 0 20px rgba(255,215,0,0.8)', marginBottom: '4px' }}>
+              {rankUpRank.toUpperCase()}
+            </div>
+            <div style={{ color: '#00ff88', fontSize: '11px', letterSpacing: '0.2em', fontFamily: 'monospace' }}>
+              RANK ACHIEVED
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Share modal */}
+      {shareData && (
+        <ShareModal
+          onClose={() => setShareData(null)}
+          pnl={shareData.pnl}
+          side={shareData.side}
+          entryPrice={shareData.entryPrice}
+          exitPrice={shareData.exitPrice}
+        />
+      )}
+
+      {/* Builder code approval — shown once per wallet until approved */}
+      <BuilderApprovalModal />
     </div>
   );
 }

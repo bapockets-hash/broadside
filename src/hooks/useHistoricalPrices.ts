@@ -11,31 +11,61 @@ const BINANCE_INTERVAL: Record<Timeframe, string> = {
 };
 
 // Pacifica REST candles endpoint (try first, fallback to Binance)
-const PACIFICA_BASE = process.env.NEXT_PUBLIC_PACIFICA_API_URL || 'https://test-api.pacifica.fi/api/v1';
+const PACIFICA_BASE = process.env.NEXT_PUBLIC_PACIFICA_API_URL || 'https://api.pacifica.fi/api/v1';
 
-async function fetchPacificaCandles(timeframe: Timeframe, limit: number) {
+const BINANCE_SYMBOL_MAP: Record<string, string> = {
+  BTC: 'BTCUSDT', ETH: 'ETHUSDT', SOL: 'SOLUSDT', BNB: 'BNBUSDT',
+  AVAX: 'AVAXUSDT', XRP: 'XRPUSDT', DOGE: 'DOGEUSDT', ADA: 'ADAUSDT',
+  LINK: 'LINKUSDT', SUI: 'SUIUSDT', TON: 'TONUSDT', NEAR: 'NEARUSDT',
+  ICP: 'ICPUSDT', TAO: 'TAOUSDT', HYPE: 'HYPEUSDT',
+  kPEPE: '1000PEPEUSDT', kBONK: '1000BONKUSDT',
+  UNI: 'UNIUSDT', AAVE: 'AAVEUSDT', CRV: 'CRVUSDT', LDO: 'LDOUSDT',
+  ARB: 'ARBUSDT', JUP: 'JUPUSDT', TRUMP: 'TRUMPUSDT', WIF: 'WIFUSDT',
+  PENGU: 'PENGUUSDT', LTC: 'LTCUSDT', BCH: 'BCHUSDT',
+  XMR: 'XMRUSDT', ZEC: 'ZECUSDT', ENA: 'ENAUSDT', STRK: 'STRKUSDT',
+  VIRTUAL: 'VIRTUALUSDT', ZK: 'ZKUSDT', ZRO: 'ZROUSDT',
+  WLD: 'WLDUSDT', PAXG: 'PAXGUSDT', OM: 'OMUSDT',
+};
+
+async function fetchPacificaCandles(timeframe: Timeframe, limit: number, symbol: string = 'BTC') {
   const interval = BINANCE_INTERVAL[timeframe];
-  const url = `${PACIFICA_BASE}/candles?symbol=BTC&interval=${interval}&limit=${limit}`;
+  const url = `${PACIFICA_BASE}/candles?symbol=${symbol}&interval=${interval}&limit=${limit}`;
   const res = await fetch(url, { signal: AbortSignal.timeout(4000) });
   if (!res.ok) throw new Error(`Pacifica candles ${res.status}`);
   const data = await res.json();
-  // Expected: [{ t: ms, c: "price" }, ...] or [[openTime, o, h, l, close], ...]
-  const candles: [number, string][] = Array.isArray(data)
-    ? data.map((k: Record<string, unknown> | unknown[]) => {
-        if (Array.isArray(k)) return [k[0] as number, String(k[4])];
-        return [(k.t ?? k.time ?? k.openTime) as number, String(k.c ?? k.close)];
+
+  // Pacifica candles can be array-of-arrays [openTime,o,h,l,close,vol,...] or
+  // array-of-objects {t,o,h,l,c,v} — extract close and volume from both shapes.
+  type RawCandle = Record<string, unknown> | unknown[];
+  const rows: { t: number; c: number; v: number }[] = Array.isArray(data)
+    ? data.map((k: RawCandle) => {
+        if (Array.isArray(k)) {
+          return {
+            t: k[0] as number,
+            c: parseFloat(String(k[4])),
+            v: parseFloat(String(k[5] ?? k[7] ?? 0)),
+          };
+        }
+        const obj = k as Record<string, unknown>;
+        return {
+          t: (obj.t ?? obj.time ?? obj.openTime) as number,
+          c: parseFloat(String(obj.c ?? obj.close)),
+          v: parseFloat(String(obj.v ?? obj.vol ?? obj.volume ?? obj.quoteVol ?? 0)),
+        };
       })
     : [];
-  if (!candles.length) throw new Error('empty Pacifica candles');
+
+  if (!rows.length) throw new Error('empty Pacifica candles');
   return {
-    prices: candles.map(k => parseFloat(k[1])),
-    timestamps: candles.map(k => k[0]),
+    prices:     rows.map(r => r.c),
+    timestamps: rows.map(r => r.t),
+    volumes:    rows.map(r => (isNaN(r.v) ? 0 : r.v)),
   };
 }
 
-async function fetchBinanceCandles(timeframe: Timeframe, limit: number) {
+async function fetchBinanceCandles(timeframe: Timeframe, limit: number, pair: string = 'BTCUSDT') {
   const interval = BINANCE_INTERVAL[timeframe];
-  const url = `https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=${interval}&limit=${limit}`;
+  const url = `https://api.binance.com/api/v3/klines?symbol=${pair}&interval=${interval}&limit=${limit}`;
   const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
   if (!res.ok) throw new Error(`Binance klines ${res.status}`);
   // [[openTime, open, high, low, close, baseVol, closeTime, quoteVol, ...], ...]
@@ -49,6 +79,7 @@ async function fetchBinanceCandles(timeframe: Timeframe, limit: number) {
 
 export function useHistoricalPrices() {
   const timeframe = useGameStore(s => s.timeframe);
+  const selectedSymbol = useGameStore(s => s.selectedSymbol);
   const setHistoricalData = useGameStore(s => s.setHistoricalData);
   const setVolumeHistory = useGameStore(s => s.setVolumeHistory);
 
@@ -57,20 +88,33 @@ export function useHistoricalPrices() {
 
     async function load() {
       try {
-        // Try Pacifica first (no volume data), fall back to Binance
+        const binancePair = BINANCE_SYMBOL_MAP[selectedSymbol];
+
         let prices: number[];
         let timestamps: number[];
         let volumes: number[] | undefined;
+
         try {
-          const r = await fetchPacificaCandles(timeframe, 200);
+          const r = await fetchPacificaCandles(timeframe, 200, selectedSymbol);
           prices = r.prices;
           timestamps = r.timestamps;
+          volumes = r.volumes;
+          // If Pacifica returned all-zero volumes (field absent), try Binance as backup
+          const hasVol = volumes.some(v => v > 0);
+          if (!hasVol && binancePair) {
+            try {
+              const vr = await fetchBinanceCandles(timeframe, 200, binancePair);
+              volumes = vr.volumes;
+            } catch { /* keep zero volumes, terrain will be flat */ }
+          }
         } catch {
-          const r = await fetchBinanceCandles(timeframe, 200);
+          if (!binancePair) return; // no data source for this symbol
+          const r = await fetchBinanceCandles(timeframe, 200, binancePair);
           prices = r.prices;
           timestamps = r.timestamps;
           volumes = r.volumes;
         }
+
         if (!cancelled) {
           setHistoricalData(prices, timestamps);
           if (volumes) setVolumeHistory(volumes);
@@ -88,5 +132,5 @@ export function useHistoricalPrices() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [timeframe, setHistoricalData, setVolumeHistory]);
+  }, [timeframe, selectedSymbol, setHistoricalData, setVolumeHistory]);
 }

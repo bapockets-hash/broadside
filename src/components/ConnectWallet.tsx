@@ -1,10 +1,13 @@
 'use client';
 
 import { usePrivy } from '@privy-io/react-auth';
+import { useWallets } from '@privy-io/react-auth/solana';
 import { useEffect, useRef, useState } from 'react';
 
 export default function ConnectWallet() {
-  const { ready, authenticated, login } = usePrivy();
+  const { ready, authenticated, login, logout } = usePrivy();
+  const { wallets } = useWallets();
+  const hasWallet = wallets.length > 0;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [radarAngle, setRadarAngle] = useState(0);
   const [timedOut, setTimedOut] = useState(false);
@@ -12,13 +15,12 @@ export default function ConnectWallet() {
 
   // Don't block forever if Privy fails to initialize (e.g. bad app ID)
   useEffect(() => {
-    const t = setTimeout(() => setTimedOut(true), 3000);
+    const t = setTimeout(() => setTimedOut(true), 8000);
     return () => clearTimeout(t);
   }, []);
 
   function handleDeploy() {
-    if (ready) login();
-    setDismissed(true);
+    login();
   }
 
   // Animate radar sweep
@@ -173,7 +175,8 @@ export default function ConnectWallet() {
     );
   }
 
-  if (authenticated || dismissed) return null;
+  // Hide once authenticated AND a Solana wallet is available (or user chose demo)
+  if ((authenticated && hasWallet) || dismissed) return null;
 
   return (
     <div
@@ -261,30 +264,64 @@ export default function ConnectWallet() {
           ))}
         </div>
 
-        {/* Connect button */}
-        <button
-          onClick={handleDeploy}
-          className="w-full py-4 rounded font-mono font-bold text-lg tracking-widest transition-all"
-          style={{
-            background: 'linear-gradient(135deg, rgba(0,212,255,0.2), rgba(0,100,180,0.3))',
-            border: '2px solid #00d4ff',
-            color: '#00d4ff',
-            textShadow: '0 0 20px rgba(0,212,255,0.8)',
-            boxShadow: '0 0 30px rgba(0,212,255,0.3), inset 0 0 30px rgba(0,212,255,0.05)',
-          }}
-          onMouseEnter={e => {
-            (e.currentTarget as HTMLButtonElement).style.boxShadow = '0 0 50px rgba(0,212,255,0.6), inset 0 0 30px rgba(0,212,255,0.1)';
-          }}
-          onMouseLeave={e => {
-            (e.currentTarget as HTMLButtonElement).style.boxShadow = '0 0 30px rgba(0,212,255,0.3), inset 0 0 30px rgba(0,212,255,0.05)';
-          }}
-        >
-          ⚓ DEPLOY FLEET
-        </button>
+        {/* Connect button — or reconnect if authenticated without a Solana wallet */}
+        {authenticated && !hasWallet ? (
+          <>
+            <div className="mb-3 text-xs font-mono text-center" style={{ color: '#ffd700' }}>
+              Session found — reconnect your Solana wallet to trade live
+            </div>
+            <button
+              onClick={async () => { await logout(); login(); }}
+              className="w-full py-4 rounded font-mono font-bold text-lg tracking-widest transition-all"
+              style={{
+                background: 'linear-gradient(135deg, rgba(255,215,0,0.15), rgba(200,150,0,0.2))',
+                border: '2px solid #ffd700',
+                color: '#ffd700',
+                textShadow: '0 0 20px rgba(255,215,0,0.8)',
+                boxShadow: '0 0 30px rgba(255,215,0,0.2)',
+                cursor: 'pointer',
+              }}
+            >
+              ⚓ RECONNECT WALLET
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={handleDeploy}
+            disabled={!ready}
+            className="w-full py-4 rounded font-mono font-bold text-lg tracking-widest transition-all"
+            style={{
+              background: ready
+                ? 'linear-gradient(135deg, rgba(0,212,255,0.2), rgba(0,100,180,0.3))'
+                : 'rgba(0,212,255,0.05)',
+              border: '2px solid #00d4ff',
+              color: ready ? '#00d4ff' : 'rgba(0,212,255,0.35)',
+              textShadow: ready ? '0 0 20px rgba(0,212,255,0.8)' : 'none',
+              boxShadow: ready ? '0 0 30px rgba(0,212,255,0.3), inset 0 0 30px rgba(0,212,255,0.05)' : 'none',
+              cursor: ready ? 'pointer' : 'wait',
+            }}
+            onMouseEnter={e => {
+              if (ready) (e.currentTarget as HTMLButtonElement).style.boxShadow = '0 0 50px rgba(0,212,255,0.6), inset 0 0 30px rgba(0,212,255,0.1)';
+            }}
+            onMouseLeave={e => {
+              if (ready) (e.currentTarget as HTMLButtonElement).style.boxShadow = '0 0 30px rgba(0,212,255,0.3), inset 0 0 30px rgba(0,212,255,0.05)';
+            }}
+          >
+            {ready ? '⚓ DEPLOY FLEET' : 'INITIALIZING...'}
+          </button>
+        )}
 
-        <div className="mt-3 text-xs font-mono" style={{ color: '#333' }}>
-          Connect wallet or email to begin your campaign
+        <div className="mt-3 text-xs font-mono" style={{ color: '#444' }}>
+          Connect Phantom or any Solana wallet to begin
         </div>
+
+        <button
+          onClick={() => setDismissed(true)}
+          className="mt-2 text-xs font-mono underline"
+          style={{ color: '#2a4a6a', background: 'none', border: 'none', cursor: 'pointer' }}
+        >
+          Play as guest (demo mode)
+        </button>
       </div>
     </div>
   );

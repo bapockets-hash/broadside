@@ -73,7 +73,8 @@ function genOrderId(): string {
 // ── Client ───────────────────────────────────────────────────────────────────
 
 const DEMO_WALLET = 'demo-wallet';
-const BASE_URL = process.env.NEXT_PUBLIC_PACIFICA_API_URL || 'https://test-api.pacifica.fi/api/v1';
+const BASE_URL = process.env.NEXT_PUBLIC_PACIFICA_API_URL || 'https://api.pacifica.fi/api/v1';
+const BUILDER_CODE = process.env.NEXT_PUBLIC_PACIFICA_BUILDER_CODE || '';
 
 export class PacificaClient {
   private walletAddress: string;
@@ -148,6 +149,7 @@ export class PacificaClient {
         side: params.side === 'buy' ? 'bid' : 'ask',
         slippage_percent: '1.0',
         client_order_id: genOrderId(),
+        ...(BUILDER_CODE ? { builder_code: BUILDER_CODE } : {}),
       };
 
       const body = await this.buildSignedBody('create_market_order', payload);
@@ -188,6 +190,7 @@ export class PacificaClient {
         side: 'bid',      // will be overridden by reduce_only logic on exchange
         slippage_percent: '2.0',
         client_order_id: genOrderId(),
+        ...(BUILDER_CODE ? { builder_code: BUILDER_CODE } : {}),
       };
 
       const body = await this.buildSignedBody('create_market_order', payload);
@@ -264,6 +267,40 @@ export class PacificaClient {
     } catch {
       return null;
     }
+  }
+
+  // ── Builder code approval ──────────────────────────────────────────────────
+
+  /** Returns true if this wallet has already approved the given builder code */
+  async checkBuilderApproval(builderCode: string): Promise<boolean> {
+    if (this.isDemo) return false;
+    try {
+      const res = await this.client.get(
+        `/account/builder_codes/approvals?account=${this.walletAddress}`
+      );
+      const approvals: { builder_code: string }[] = res.data ?? [];
+      return approvals.some(a => a.builder_code === builderCode);
+    } catch {
+      return false;
+    }
+  }
+
+  /** Sign and submit a builder code approval */
+  async approveBuilderCode(builderCode: string, maxFeeRate = '0.001'): Promise<void> {
+    if (this.isDemo) return;
+    const payload = { builder_code: builderCode, max_fee_rate: maxFeeRate };
+    const timestamp = Date.now();
+    const expiryWindow = 5000;
+    const message = buildMessage('approve_builder_code', payload, timestamp, expiryWindow);
+    const signature = await this.signMessage(message);
+    const body = {
+      account: this.walletAddress,
+      signature,
+      timestamp,
+      expiry_window: expiryWindow,
+      ...payload,
+    };
+    await this.client.post('/account/builder_codes/approve', body);
   }
 
   async getPrice(symbol: string): Promise<PriceData> {

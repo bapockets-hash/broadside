@@ -3,6 +3,7 @@
 import { useGameStore } from '@/store/gameStore';
 import { useEffect, useRef, useState } from 'react';
 import { soundEngine } from '@/lib/soundEngine';
+import { usePrivy } from '@privy-io/react-auth';
 
 const RANK_MAX_XP: Record<string, number> = {
   'Recruit': 100,
@@ -52,6 +53,8 @@ interface MissionToastState {
 
 export default function AdmiralPanel() {
   const { xp, rank, missions, missionProgress, sessionStats, combatLog, lightMode } = useGameStore();
+  const { logout, user } = usePrivy();
+  const walletAddress = user?.wallet?.address;
   const [toast, setToast] = useState<MissionToastState | null>(null);
   const prevMissionsRef = useRef(missions);
   const prevXpRef = useRef(xp);
@@ -146,11 +149,11 @@ export default function AdmiralPanel() {
       {/* Admiral Profile */}
       <div
         className="px-3 py-3"
-        style={{ borderBottom: '1px solid rgba(0,212,255,0.2)' }}
+        style={{ borderBottom: lightMode ? '1px solid rgba(0,100,200,0.2)' : '1px solid rgba(0,212,255,0.2)' }}
       >
         <div
           className="text-xs font-bold tracking-widest mb-2 text-center"
-          style={{ color: '#00d4ff', fontFamily: 'var(--font-orbitron, monospace)' }}
+          style={{ color: lightMode ? '#0055aa' : '#00d4ff', fontFamily: 'var(--font-orbitron, monospace)' }}
         >
           ⚓ ADMIRAL PROFILE
         </div>
@@ -160,8 +163,8 @@ export default function AdmiralPanel() {
           <div
             className="text-2xl mb-1"
             style={{
-              color: '#ffd700',
-              textShadow: '0 0 12px rgba(255,215,0,0.6)',
+              color: lightMode ? '#8a6200' : '#ffd700',
+              textShadow: lightMode ? 'none' : '0 0 12px rgba(255,215,0,0.6)',
               animation: xpDelta ? 'rank-up 0.6s ease-in-out' : 'none',
             }}
           >
@@ -169,7 +172,7 @@ export default function AdmiralPanel() {
           </div>
           <div
             className="text-xs font-bold tracking-widest"
-            style={{ color: '#ffd700', fontFamily: 'var(--font-orbitron, monospace)' }}
+            style={{ color: lightMode ? '#8a6200' : '#c8940a', fontFamily: 'var(--font-orbitron, monospace)' }}
           >
             {rank.toUpperCase()}
           </div>
@@ -177,20 +180,20 @@ export default function AdmiralPanel() {
 
         {/* XP Bar */}
         <div className="relative">
-          <div className="flex justify-between text-xs mb-1" style={{ color: '#555', fontSize: '10px' }}>
+          <div className="flex justify-between text-xs mb-1" style={{ color: lightMode ? '#445566' : '#555', fontSize: '10px' }}>
             <span>XP</span>
-            <span style={{ color: '#aaa' }}>{xp} / {rankMaxXp}</span>
+            <span style={{ color: lightMode ? '#1a2a3a' : '#aaa' }}>{xp} / {rankMaxXp}</span>
           </div>
           <div
             className="h-2 rounded-sm overflow-hidden"
-            style={{ background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(255,215,0,0.2)' }}
+            style={{ background: lightMode ? 'rgba(0,0,0,0.1)' : 'rgba(0,0,0,0.5)', border: lightMode ? '1px solid rgba(138,98,0,0.3)' : '1px solid rgba(255,215,0,0.2)' }}
           >
             <div
               className="h-full transition-all duration-500"
               style={{
                 width: `${xpPct}%`,
-                background: 'linear-gradient(90deg, #b8860b, #ffd700)',
-                boxShadow: '0 0 6px rgba(255,215,0,0.5)',
+                background: lightMode ? 'linear-gradient(90deg, #6b4a00, #8a6200)' : 'linear-gradient(90deg, #b8860b, #ffd700)',
+                boxShadow: lightMode ? 'none' : '0 0 6px rgba(255,215,0,0.5)',
               }}
             />
           </div>
@@ -218,11 +221,11 @@ export default function AdmiralPanel() {
       {/* Active Missions */}
       <div
         className="px-3 py-2"
-        style={{ borderBottom: '1px solid rgba(0,212,255,0.2)' }}
+        style={{ borderBottom: lightMode ? '1px solid rgba(0,100,200,0.2)' : '1px solid rgba(0,212,255,0.2)' }}
       >
         <div
           className="text-xs font-bold tracking-widest mb-2"
-          style={{ color: '#00d4ff', fontFamily: 'var(--font-orbitron, monospace)' }}
+          style={{ color: lightMode ? '#0055aa' : '#00d4ff', fontFamily: 'var(--font-orbitron, monospace)' }}
         >
           ACTIVE MISSIONS
         </div>
@@ -238,20 +241,22 @@ export default function AdmiralPanel() {
                 className="rounded px-2 py-1.5"
                 style={{
                   background: mission.completed
-                    ? 'rgba(0,255,136,0.05)'
-                    : 'rgba(255,255,255,0.02)',
-                  border: `1px solid ${mission.completed ? 'rgba(0,255,136,0.3)' : 'rgba(0,212,255,0.1)'}`,
+                    ? (lightMode ? 'rgba(0,180,80,0.08)' : 'rgba(0,255,136,0.05)')
+                    : (lightMode ? 'rgba(0,0,0,0.04)' : 'rgba(255,255,255,0.02)'),
+                  border: `1px solid ${mission.completed
+                    ? (lightMode ? 'rgba(0,150,60,0.4)' : 'rgba(0,255,136,0.3)')
+                    : (lightMode ? 'rgba(0,100,200,0.2)' : 'rgba(0,212,255,0.1)')}`,
                 }}
               >
                 <div className="flex items-center justify-between mb-0.5">
                   <div className="flex items-center gap-1">
-                    <span style={{ color: mission.completed ? '#00ff88' : '#555', fontSize: '10px' }}>
+                    <span style={{ color: mission.completed ? '#009955' : (lightMode ? '#778899' : '#555'), fontSize: '10px' }}>
                       {mission.completed ? '✓' : '□'}
                     </span>
                     <span
                       className="text-xs font-bold"
                       style={{
-                        color: mission.completed ? '#00ff88' : '#ccc',
+                        color: mission.completed ? '#009955' : (lightMode ? '#1a2a3a' : '#ccc'),
                         fontSize: '10px',
                         textDecoration: mission.completed ? 'line-through' : 'none',
                       }}
@@ -259,12 +264,12 @@ export default function AdmiralPanel() {
                       {mission.title}
                     </span>
                   </div>
-                  <span style={{ color: '#ffd700', fontSize: '9px' }}>
+                  <span style={{ color: lightMode ? '#8a6200' : '#c8940a', fontSize: '9px' }}>
                     {mission.reward} XP
                   </span>
                 </div>
 
-                <div style={{ color: '#555', fontSize: '9px', marginBottom: '3px' }}>
+                <div style={{ color: lightMode ? '#556677' : '#555', fontSize: '9px', marginBottom: '3px' }}>
                   {mission.description}
                 </div>
 
@@ -272,19 +277,19 @@ export default function AdmiralPanel() {
                 <div className="flex items-center gap-1">
                   <div
                     className="flex-1 h-1 rounded-sm overflow-hidden"
-                    style={{ background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(0,212,255,0.1)' }}
+                    style={{ background: lightMode ? 'rgba(0,0,0,0.1)' : 'rgba(0,0,0,0.5)', border: lightMode ? '1px solid rgba(0,100,200,0.2)' : '1px solid rgba(0,212,255,0.1)' }}
                   >
                     <div
                       className="h-full transition-all duration-300"
                       style={{
                         width: `${pct}%`,
                         background: mission.completed
-                          ? '#00ff88'
-                          : 'linear-gradient(90deg, #00d4ff80, #00d4ff)',
+                          ? '#009955'
+                          : (lightMode ? 'linear-gradient(90deg, #0077cc, #0099ff)' : 'linear-gradient(90deg, #00d4ff80, #00d4ff)'),
                       }}
                     />
                   </div>
-                  <span style={{ color: '#555', fontSize: '9px', whiteSpace: 'nowrap' }}>
+                  <span style={{ color: lightMode ? '#556677' : '#555', fontSize: '9px', whiteSpace: 'nowrap' }}>
                     {mission.type === 'profit'
                       ? `$${progress.toFixed(0)}/$${mission.target}`
                       : `${progress}/${mission.target}`}
@@ -300,27 +305,27 @@ export default function AdmiralPanel() {
       <div className="px-3 py-2 flex-1">
         <div
           className="text-xs font-bold tracking-widest mb-2"
-          style={{ color: '#00d4ff', fontFamily: 'var(--font-orbitron, monospace)' }}
+          style={{ color: lightMode ? '#0055aa' : '#00d4ff', fontFamily: 'var(--font-orbitron, monospace)' }}
         >
           SESSION STATS
         </div>
 
         <div
           className="rounded p-2 space-y-1.5"
-          style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(0,212,255,0.15)' }}
+          style={{ background: lightMode ? 'rgba(0,0,0,0.05)' : 'rgba(0,0,0,0.3)', border: lightMode ? '1px solid rgba(0,100,200,0.2)' : '1px solid rgba(0,212,255,0.15)' }}
         >
           {[
-            { label: 'TRADES', value: `${sessionStats.totalTrades}`, color: '#aaa' },
-            { label: 'WIN RATE', value: `${winRate}%`, color: winRate >= 50 ? '#00ff88' : '#ff3333' },
+            { label: 'TRADES', value: `${sessionStats.totalTrades}`, color: lightMode ? '#1a2a3a' : '#aaa' },
+            { label: 'WIN RATE', value: `${winRate}%`, color: winRate >= 50 ? (lightMode ? '#007744' : '#00ff88') : '#cc2222' },
             {
               label: 'BEST PnL',
               value: `${sessionStats.bestPnl >= 0 ? '+' : ''}$${sessionStats.bestPnl.toFixed(2)}`,
-              color: sessionStats.bestPnl >= 0 ? '#00ff88' : '#ff3333',
+              color: sessionStats.bestPnl >= 0 ? (lightMode ? '#007744' : '#00ff88') : '#cc2222',
             },
-            { label: 'TOTAL XP', value: `${xp}`, color: '#ffd700' },
+            { label: 'TOTAL XP', value: `${xp}`, color: lightMode ? '#8a6200' : '#c8940a' },
           ].map(({ label, value, color }) => (
             <div key={label} className="flex justify-between text-xs">
-              <span style={{ color: '#555' }}>{label}</span>
+              <span style={{ color: lightMode ? '#556677' : '#555' }}>{label}</span>
               <span style={{ color }}>{value}</span>
             </div>
           ))}
@@ -330,19 +335,23 @@ export default function AdmiralPanel() {
       {/* Combat Log */}
       <div
         className="px-3 py-2"
-        style={{ borderTop: '1px solid rgba(0,212,255,0.2)' }}
+        style={{ borderTop: lightMode ? '1px solid rgba(0,100,200,0.2)' : '1px solid rgba(0,212,255,0.2)' }}
       >
         <div
           className="text-xs font-bold tracking-widest mb-2"
-          style={{ color: '#00d4ff', fontFamily: 'var(--font-orbitron, monospace)' }}
+          style={{ color: lightMode ? '#0055aa' : '#00d4ff', fontFamily: 'var(--font-orbitron, monospace)' }}
         >
           COMBAT LOG
         </div>
         <div className="space-y-1">
           {combatLog.slice(0, 5).map((entry, i) => {
             const colors: Record<string, string> = {
-              attack: '#ff3333', defend: '#00ff88', damage: '#ff8800',
-              info: '#4a7a9b', victory: '#ffd700', defeat: '#ff3333',
+              attack: lightMode ? '#cc2222' : '#ff3333',
+              defend: lightMode ? '#007744' : '#00ff88',
+              damage: lightMode ? '#cc6600' : '#ff8800',
+              info: lightMode ? '#335577' : '#4a7a9b',
+              victory: lightMode ? '#aa7700' : '#ffd700',
+              defeat: lightMode ? '#cc2222' : '#ff3333',
             };
             const icons: Record<string, string> = {
               attack: '⚔', defend: '🛡', damage: '💥',
@@ -368,17 +377,58 @@ export default function AdmiralPanel() {
         </div>
       </div>
 
+      {/* Wallet + sign out */}
+      {walletAddress && (
+        <div
+          className="px-3 py-2"
+          style={{ borderTop: lightMode ? '1px solid rgba(0,100,200,0.2)' : '1px solid rgba(0,212,255,0.2)' }}
+        >
+          <div
+            className="text-center mb-1.5"
+            style={{ fontSize: '9px', color: lightMode ? '#556677' : '#445566', letterSpacing: '0.05em' }}
+          >
+            {walletAddress.slice(0, 4)}…{walletAddress.slice(-4)}
+          </div>
+          <button
+            onClick={() => logout()}
+            className="w-full py-1.5 rounded text-xs font-mono tracking-widest transition-all"
+            style={{
+              background: 'transparent',
+              border: lightMode ? '1px solid rgba(180,0,0,0.3)' : '1px solid rgba(255,60,60,0.25)',
+              color: lightMode ? '#aa2222' : '#cc4444',
+              cursor: 'pointer',
+              fontSize: '10px',
+              letterSpacing: '0.1em',
+            }}
+            onMouseEnter={e => {
+              (e.currentTarget as HTMLButtonElement).style.background = lightMode ? 'rgba(180,0,0,0.06)' : 'rgba(255,60,60,0.08)';
+            }}
+            onMouseLeave={e => {
+              (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+            }}
+          >
+            DISCONNECT
+          </button>
+        </div>
+      )}
+
       {/* Branding footer */}
       <div
-        className="mt-auto text-center py-2 px-3"
-        style={{ borderTop: '1px solid rgba(255,215,0,0.15)' }}
+        className="text-center py-2 px-3"
+        style={{ borderTop: lightMode ? '1px solid rgba(138,98,0,0.2)' : '1px solid rgba(255,215,0,0.15)' }}
       >
-        <div className="text-xs" style={{ color: '#ffd700', fontSize: '10px' }}>
+        <div className="text-xs" style={{ color: lightMode ? '#8a6200' : '#ffd700', fontSize: '10px' }}>
           ⚓ POWERED BY
         </div>
-        <div className="text-xs font-bold tracking-widest" style={{ color: '#ffd700' }}>
-          PACIFICA DEX
-        </div>
+        <a
+          href="https://app.pacifica.fi?referral=broadside"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-xs font-bold tracking-widest"
+          style={{ color: lightMode ? '#8a6200' : '#ffd700', textDecoration: 'underline', cursor: 'pointer' }}
+        >
+          PACIFICA
+        </a>
       </div>
     </div>
   );

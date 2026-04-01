@@ -1,8 +1,24 @@
 const PACIFICA_WS_URL = process.env.NEXT_PUBLIC_PACIFICA_WS_URL || 'wss://test-ws.pacifica.fi/ws';
 
+export interface MarketStats {
+  funding: number;      // funding rate as decimal (e.g. 0.000015)
+  openInterest: number; // in base token (BTC)
+  volume24h: number;    // in USD
+}
+
+export interface MarketEntry {
+  symbol: string;
+  price: number;
+  funding: number;
+  openInterest: number;
+  volume24h: number;
+}
+
 export class PriceWebSocket {
   private symbol: string;
   private onPrice: (price: number) => void;
+  private onMarketStats?: (stats: MarketStats) => void;
+  private onAllMarketData?: (entries: MarketEntry[]) => void;
   private ws: WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private isConnected = false;
@@ -10,9 +26,16 @@ export class PriceWebSocket {
   private lastPrice = 100000;
   private source: 'pacifica' | 'binance' | 'simulation' = 'pacifica';
 
-  constructor(symbol: string, onPrice: (price: number) => void) {
+  constructor(
+    symbol: string,
+    onPrice: (price: number) => void,
+    onMarketStats?: (stats: MarketStats) => void,
+    onAllMarketData?: (entries: MarketEntry[]) => void,
+  ) {
     this.symbol = symbol;
     this.onPrice = onPrice;
+    this.onMarketStats = onMarketStats;
+    this.onAllMarketData = onAllMarketData;
   }
 
   connect(): void {
@@ -36,7 +59,6 @@ export class PriceWebSocket {
         clearTimeout(timeout);
         this.isConnected = true;
         this.source = 'pacifica';
-        // Pacifica subscribe message format
         this.ws?.send(JSON.stringify({
           method: 'subscribe',
           params: { source: 'prices' },
@@ -46,11 +68,7 @@ export class PriceWebSocket {
       this.ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          const price = this.extractPacificaPrice(data);
-          if (price !== null) {
-            this.lastPrice = price;
-            this.onPrice(price);
-          }
+          this.handlePacificaMessage(data);
         } catch {
           // ignore parse errors
         }
@@ -74,7 +92,53 @@ export class PriceWebSocket {
     }
   }
 
-  /** Parse price from Pacifica WebSocket messages */
+  /** Handle Pacifica WebSocket messages.
+   *  Actual format: { channel: "prices", data: [{ symbol, mark, funding, open_interest, volume_24h, ... }] }
+   */
+  private handlePacificaMessage(data: Record<string, unknown>): void {
+    // Primary format: { channel: "prices", data: [...] }
+    if (data.channel === 'prices' && Array.isArray(data.data)) {
+      const baseSymbol = this.symbol.replace('-PERP', '').replace('USDT', '').toUpperCase();
+      const entry = (data.data as Record<string, string>[]).find(x => x.symbol === baseSymbol);
+      if (entry) {
+        const price = parseFloat(entry.mark || entry.oracle || entry.mid);
+        if (!isNaN(price) && price > 0) {
+          this.lastPrice = price;
+          this.onPrice(price);
+        }
+        if (this.onMarketStats) {
+          const funding = parseFloat(entry.funding);
+          const openInterest = parseFloat(entry.open_interest);
+          const volume24h = parseFloat(entry.volume_24h);
+          if (!isNaN(funding) && !isNaN(openInterest) && !isNaN(volume24h)) {
+            this.onMarketStats({ funding, openInterest, volume24h });
+          }
+        }
+      }
+      if (this.onAllMarketData) {
+        const allEntries: MarketEntry[] = (data.data as Record<string, string>[])
+          .map(x => ({
+            symbol: x.symbol,
+            price: parseFloat(x.mark || x.oracle || x.mid),
+            funding: parseFloat(x.funding) || 0,
+            openInterest: parseFloat(x.open_interest) || 0,
+            volume24h: parseFloat(x.volume_24h) || 0,
+          }))
+          .filter(e => !isNaN(e.price) && e.price > 0);
+        this.onAllMarketData(allEntries);
+      }
+      return;
+    }
+
+    // Fallback formats (legacy/alternative)
+    const price = this.extractPacificaPrice(data);
+    if (price !== null) {
+      this.lastPrice = price;
+      this.onPrice(price);
+    }
+  }
+
+  /** Parse price from legacy Pacifica WebSocket message formats */
   private extractPacificaPrice(data: Record<string, unknown>): number | null {
     // Format: { type: "prices", data: { BTC: "104000.50", ... } }
     if (data.type === 'prices' && data.data && typeof data.data === 'object') {
@@ -166,7 +230,7 @@ export class PriceWebSocket {
     this.isConnected = true;
     this.source = 'simulation';
     this.simulationInterval = setInterval(() => {
-      const drift = (Math.random() - 0.49) * 0.0005; // slight upward drift
+      const drift = (Math.random() - 0.49) * 0.0005;
       const volatility = (Math.random() - 0.5) * 0.004;
       this.lastPrice = Math.max(50000, Math.min(200000, this.lastPrice * (1 + drift + volatility)));
       this.onPrice(Math.round(this.lastPrice * 100) / 100);
@@ -205,7 +269,9 @@ export class PriceWebSocket {
 
 export function createPriceWebSocket(
   symbol: string,
-  onPrice: (price: number) => void
+  onPrice: (price: number) => void,
+  onMarketStats?: (stats: MarketStats) => void,
+  onAllMarketData?: (entries: MarketEntry[]) => void,
 ): PriceWebSocket {
-  return new PriceWebSocket(symbol, onPrice);
+  return new PriceWebSocket(symbol, onPrice, onMarketStats, onAllMarketData);
 }

@@ -18,7 +18,8 @@ const mockAdmirals: Admiral[] = [
   { rank: 5, address: '0xe3f2...1a9d', shipsSunk: 19, fleetValue: 32100, isCurrentPlayer: true },
 ];
 
-const rankStyles = ['#ffd700', '#c0c0c0', '#cd7f32', '#aaa', '#888'];
+const rankStylesDark = ['#ffd700', '#c0c0c0', '#cd7f32', '#aaa', '#888'];
+const rankStylesLight = ['#8a6200', '#607080', '#7a4a10', '#556677', '#445566'];
 const rankLabels = ['ADMIRAL', 'COMMODORE', 'CAPTAIN', 'COMMANDER', 'LT. CMDR'];
 
 function truncateAddress(address: string): string {
@@ -29,6 +30,7 @@ function truncateAddress(address: string): string {
 export default function Leaderboard() {
   const admirals = mockAdmirals;
   const lightMode = useGameStore(s => s.lightMode);
+  const rankStyles = lightMode ? rankStylesLight : rankStylesDark;
 
   return (
     <div
@@ -49,7 +51,7 @@ export default function Leaderboard() {
       >
         <div
           className="text-xs font-bold tracking-widest"
-          style={{ color: '#ffd700', textShadow: lightMode ? 'none' : '0 0 10px rgba(255,215,0,0.5)', fontFamily: 'var(--font-orbitron, monospace)' }}
+          style={{ color: lightMode ? '#8a6200' : '#ffd700', textShadow: lightMode ? 'none' : '0 0 10px rgba(255,215,0,0.5)', fontFamily: 'var(--font-orbitron, monospace)' }}
         >
           ★ ADMIRAL RANKINGS ★
         </div>

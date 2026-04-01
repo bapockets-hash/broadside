@@ -1,5 +1,13 @@
 import { create } from 'zustand';
 
+export interface MarketEntry {
+  symbol: string;
+  price: number;
+  funding: number;
+  openInterest: number;
+  volume24h: number;
+}
+
 export interface Position {
   side: 'long' | 'short';
   size: number;
@@ -116,6 +124,9 @@ export interface GameState {
   missionProgress: Record<string, number>;
   sessionStats: SessionStats;
   lightMode: boolean;
+  marketStats: { funding: number; openInterest: number; volume24h: number } | null;
+  selectedSymbol: string;
+  allMarketPrices: Record<string, MarketEntry>;
 
   // Actions
   setCurrentPrice: (price: number) => void;
@@ -140,6 +151,9 @@ export interface GameState {
   updateMissionProgress: (type: string, value: number) => void;
   updateSessionStats: (pnl: number, isWin: boolean) => void;
   toggleLightMode: () => void;
+  setMarketStats: (stats: { funding: number; openInterest: number; volume24h: number }) => void;
+  setSelectedSymbol: (symbol: string) => void;
+  setAllMarketPrices: (entries: MarketEntry[]) => void;
 }
 
 export const useGameStore = create<GameState>((set, get) => ({
@@ -174,6 +188,9 @@ export const useGameStore = create<GameState>((set, get) => ({
     totalPnl: 0,
   },
   lightMode: false,
+  marketStats: null,
+  selectedSymbol: 'BTC',
+  allMarketPrices: {},
 
   setCurrentPrice: (price) =>
     set((state) => {
@@ -228,10 +245,10 @@ export const useGameStore = create<GameState>((set, get) => ({
     }),
 
   setHistoricalData: (prices, timestamps) =>
-    set((state) => {
-      // Each element is already one candle at the selected interval — take the last
-      // DISPLAY_POINTS directly. No downsampling: downsampling would skip candles and
-      // break the per-interval tick alignment on the time axis.
+    set(() => {
+      // prices[] are already candles at the selected timeframe interval.
+      // Store them as-is; show the last DISPLAY_POINTS directly — no tick-based
+      // windowing needed because the data is already at the right granularity.
       const priceBuffer = prices.slice(-BUFFER_MAX);
       const timestampBuffer = timestamps.slice(-BUFFER_MAX);
       return {
@@ -239,21 +256,16 @@ export const useGameStore = create<GameState>((set, get) => ({
         timestampBuffer,
         priceHistory: priceBuffer.slice(-DISPLAY_POINTS),
         priceTimestamps: timestampBuffer.slice(-DISPLAY_POINTS),
-        currentPrice: prices[prices.length - 1] ?? state.currentPrice,
+        currentPrice: prices[prices.length - 1] ?? 0,
       };
     }),
 
   setTimeframe: (tf) =>
-    set((state) => {
-      const ticks = TIMEFRAME_TICKS[tf];
-      const window = state.priceBuffer.slice(-ticks);
-      const tsWindow = state.timestampBuffer.slice(-ticks);
-      return {
-        timeframe: tf,
-        priceHistory: downsample(window, DISPLAY_POINTS),
-        priceTimestamps: downsample(tsWindow, DISPLAY_POINTS),
-      };
-    }),
+    set(() => ({
+      // Just record the new timeframe; useHistoricalPrices will refetch candles
+      // at the correct interval and call setHistoricalData to update the chart.
+      timeframe: tf,
+    })),
 
   setVolumeHistory: (volumes) =>
     set(() => {
@@ -382,4 +394,79 @@ export const useGameStore = create<GameState>((set, get) => ({
     })),
 
   toggleLightMode: () => set((state) => ({ lightMode: !state.lightMode })),
+  setMarketStats: (stats) => set({ marketStats: stats }),
+
+  setSelectedSymbol: (symbol) =>
+    set((state) => {
+      const entry = state.allMarketPrices[symbol];
+      const price = entry?.price ?? state.currentPrice;
+      const newBuffer = Array(DISPLAY_POINTS).fill(price);
+      const newTsBuffer = defaultTimestamps(DISPLAY_POINTS, 60_000);
+      return {
+        selectedSymbol: symbol,
+        currentPrice: price,
+        priceBuffer: newBuffer,
+        timestampBuffer: newTsBuffer,
+        priceHistory: newBuffer.slice(-DISPLAY_POINTS),
+        priceTimestamps: newTsBuffer.slice(-DISPLAY_POINTS),
+        // Reset volumes so stale data from the previous symbol never bleeds through
+        volumeHistory: Array(DISPLAY_POINTS).fill(0),
+        marketStats: entry ? { funding: entry.funding, openInterest: entry.openInterest, volume24h: entry.volume24h } : null,
+        position: null,
+        gamePhase: 'idle',
+      };
+    }),
+
+  setAllMarketPrices: (entries) =>
+    set((state) => {
+      const newMap: Record<string, MarketEntry> = { ...state.allMarketPrices };
+      for (const e of entries) {
+        newMap[e.symbol] = e;
+      }
+
+      const entry = newMap[state.selectedSymbol];
+      if (!entry) return { allMarketPrices: newMap };
+
+      const price = entry.price;
+
+      // Live tick: update current price and replace the last candle close with the
+      // live price so the rightmost bar tracks real-time movement. Do NOT append a
+      // new entry — that would corrupt the timeframe-correct candle series loaded by
+      // setHistoricalData.
+      const updatedHistory = state.priceHistory.length > 0
+        ? [...state.priceHistory.slice(0, -1), price]
+        : [price];
+      const updatedTsHistory = state.priceTimestamps.length > 0
+        ? [...state.priceTimestamps.slice(0, -1), Date.now()]
+        : [Date.now()];
+
+      let updatedPosition = state.position;
+      if (state.position) {
+        const { side, entryPrice, size, leverage } = state.position;
+        const priceChange = price - entryPrice;
+        const unrealizedPnl = side === 'long'
+          ? (priceChange / entryPrice) * size * leverage
+          : (-priceChange / entryPrice) * size * leverage;
+        const maxLoss = size;
+        const currentLoss = -unrealizedPnl;
+        const marginHealth = Math.max(0, Math.min(100, 100 - (currentLoss / maxLoss) * 100));
+        const liquidationMove = (1 / leverage) * entryPrice;
+        const liquidationPrice = side === 'long' ? entryPrice - liquidationMove : entryPrice + liquidationMove;
+        updatedPosition = {
+          ...state.position,
+          unrealizedPnl: Math.round(unrealizedPnl * 100) / 100,
+          marginHealth: Math.round(marginHealth),
+          liquidationPrice: Math.round(liquidationPrice),
+        };
+      }
+
+      return {
+        allMarketPrices: newMap,
+        currentPrice: price,
+        position: updatedPosition,
+        priceHistory: updatedHistory,
+        priceTimestamps: updatedTsHistory,
+        marketStats: { funding: entry.funding, openInterest: entry.openInterest, volume24h: entry.volume24h },
+      };
+    }),
 }));
