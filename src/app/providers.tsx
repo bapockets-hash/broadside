@@ -8,9 +8,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
 
-  const solanaConnectors = toSolanaWalletConnectors({ shouldAutoConnect: false });
-
   if (!mounted) return <>{children}</>;
+
+  const solanaConnectors = toSolanaWalletConnectors({ shouldAutoConnect: false });
 
   return (
     <PrivyProvider
