@@ -1,7 +1,6 @@
 'use client';
 
 import { PrivyProvider } from '@privy-io/react-auth';
-import { toSolanaWalletConnectors } from '@privy-io/react-auth/solana';
 import { useEffect, useState } from 'react';
 
 export function Providers({ children }: { children: React.ReactNode }) {
@@ -9,8 +8,6 @@ export function Providers({ children }: { children: React.ReactNode }) {
   useEffect(() => { setMounted(true); }, []);
 
   if (!mounted) return <>{children}</>;
-
-  const solanaConnectors = toSolanaWalletConnectors({ shouldAutoConnect: false });
 
   return (
     <PrivyProvider
@@ -21,9 +18,6 @@ export function Providers({ children }: { children: React.ReactNode }) {
           theme: 'dark',
           walletChainType: 'solana-only',
           walletList: ['detected_solana_wallets', 'phantom', 'backpack'],
-        },
-        externalWallets: {
-          solana: { connectors: solanaConnectors },
         },
         embeddedWallets: {
           solana: {
