@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 
 export interface MarketEntry {
   symbol: string;
@@ -13,7 +14,8 @@ export interface Position {
   size: number;
   entryPrice: number;
   leverage: number;
-  marginHealth: number; // 0-100, 100=healthy, 0=liquidated
+  margin: number;          // initial margin in USD
+  marginHealth: number;    // 0-100, 100=healthy, 0=liquidated
   unrealizedPnl: number;
   liquidationPrice: number;
 }
@@ -156,7 +158,7 @@ export interface GameState {
   setAllMarketPrices: (entries: MarketEntry[]) => void;
 }
 
-export const useGameStore = create<GameState>((set, get) => ({
+export const useGameStore = create<GameState>()(persist((set, get) => ({
   position: null,
   currentPrice: 65000,
   priceHistory: Array(DISPLAY_POINTS).fill(65000),
@@ -209,16 +211,10 @@ export const useGameStore = create<GameState>((set, get) => ({
         const currentLoss = -unrealizedPnl;
         const marginHealth = Math.max(0, Math.min(100, 100 - (currentLoss / maxLoss) * 100));
 
-        // Calculate liquidation price
-        const liquidationMove = (1 / leverage) * entryPrice;
-        const liquidationPrice =
-          side === 'long' ? entryPrice - liquidationMove : entryPrice + liquidationMove;
-
         updatedPosition = {
           ...state.position,
           unrealizedPnl: Math.round(unrealizedPnl * 100) / 100,
           marginHealth: Math.round(marginHealth),
-          liquidationPrice: Math.round(liquidationPrice),
         };
       }
 
@@ -450,13 +446,10 @@ export const useGameStore = create<GameState>((set, get) => ({
         const maxLoss = size;
         const currentLoss = -unrealizedPnl;
         const marginHealth = Math.max(0, Math.min(100, 100 - (currentLoss / maxLoss) * 100));
-        const liquidationMove = (1 / leverage) * entryPrice;
-        const liquidationPrice = side === 'long' ? entryPrice - liquidationMove : entryPrice + liquidationMove;
         updatedPosition = {
           ...state.position,
           unrealizedPnl: Math.round(unrealizedPnl * 100) / 100,
           marginHealth: Math.round(marginHealth),
-          liquidationPrice: Math.round(liquidationPrice),
         };
       }
 
@@ -469,4 +462,17 @@ export const useGameStore = create<GameState>((set, get) => ({
         marketStats: { funding: entry.funding, openInterest: entry.openInterest, volume24h: entry.volume24h },
       };
     }),
+}), {
+  name: 'broadside-game-state',
+  partialize: (state) => ({
+    position: state.position,
+    gamePhase: state.gamePhase === 'active' ? 'active' : 'idle',
+    selectedSymbol: state.selectedSymbol,
+    leverage: state.leverage,
+    tradeSize: state.tradeSize,
+    selectedSide: state.selectedSide,
+    xp: state.xp,
+    rank: state.rank,
+    sessionStats: state.sessionStats,
+  }),
 }));

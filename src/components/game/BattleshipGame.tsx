@@ -117,6 +117,8 @@ export default function BattleshipGame() {
         private pnlText!: any;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         private comboText!: any;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        private liqExplosionLabel!: any;
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         private hoverGraphics!: any;
@@ -145,6 +147,11 @@ export default function BattleshipGame() {
         private terrainCtrl: { x: number; y: number }[] = [];
         private chartMinP = 0;
         private chartMaxP = 0;
+        // Shared chart viewport — set in drawWaves, read by drawPriceScale + drawPriceZones
+        private chartTopY = 0;
+        private chartBotY = 0;
+        private chartViewMin = 0;
+        private chartViewMax = 0;
         private hoverX = -1;
         private hoverY = -1;
         private hoverPinned = false;
@@ -502,23 +509,16 @@ export default function BattleshipGame() {
           // Price text (hidden — price shown in HUD instead)
           this.priceText = this.add.text(0, 0, '').setVisible(false);
 
-          // Phase text
-          this.phaseText = this.add.text(width / 2, 30, 'AWAITING ORDERS', {
-            fontFamily: 'monospace',
-            fontSize: '13px',
-            color: '#ffd700',
-            stroke: '#000000',
-            strokeThickness: 2,
-          }).setOrigin(0.5, 0).setDepth(10);
+          // Liquidation price explosion marker
+          this.liqExplosionLabel = this.add.text(0, 0, '💥', {
+            fontSize: '18px',
+          }).setOrigin(0.5, 0.5).setDepth(6).setVisible(false);
 
-          // PnL text
-          this.pnlText = this.add.text(20, 60, '', {
-            fontFamily: 'monospace',
-            fontSize: '12px',
-            color: '#00ff88',
-            stroke: '#000000',
-            strokeThickness: 2,
-          }).setDepth(10);
+          // Phase text (hidden — phase shown in HUD instead)
+          this.phaseText = this.add.text(0, 0, '').setVisible(false);
+
+          // PnL text (hidden — PnL shown in HUD instead)
+          this.pnlText = this.add.text(0, 0, '').setVisible(false);
 
           // Combo flash text
           this.comboText = this.add.text(width / 2, height / 2 - 40, '', {
@@ -1451,9 +1451,9 @@ export default function BattleshipGame() {
           this.waveGraphics.clear();
 
           const waterY = height * 0.68;
-          const chartDepth = 55;
-          const chartRise  = 10;
-          const totalRange = chartDepth + chartRise;
+          const chartTop = waterY;
+          const chartBot = height - 26;
+          const chartH   = chartBot - chartTop;
 
           const raw = priceHistory.length >= 2 ? priceHistory : Array(20).fill(65000);
 
@@ -1471,8 +1471,19 @@ export default function BattleshipGame() {
           const maxP = Math.max(...prices);
           const priceRange = maxP - minP || Math.max(minP * 0.002, 1e-8);
 
+          // Viewport centered on current price — scrolls as price moves
+          const viewHalf = Math.max(priceRange * 0.6, Math.max(this.currentPrice, 1) * 0.008);
+          const viewMin  = this.currentPrice - viewHalf;
+          const viewMax  = this.currentPrice + viewHalf;
+
+          // Publish viewport for drawPriceScale and drawPriceZones
+          this.chartTopY    = chartTop;
+          this.chartBotY    = chartBot;
+          this.chartViewMin = viewMin;
+          this.chartViewMax = viewMax;
+
           const priceToY = (p: number) =>
-            (waterY + chartDepth) - ((p - minP) / priceRange) * totalRange;
+            chartBot - ((p - viewMin) / (viewMax - viewMin)) * chartH;
 
           // Subtle living ripple layered on top (storm-driven choppiness)
           const chopFactor = 1 + this.stormIntensity * 4;
@@ -1480,9 +1491,7 @@ export default function BattleshipGame() {
             Math.sin(x * 0.03 + time * 1.2 * (1 + this.stormIntensity)) * 1.2 * chopFactor +
             Math.sin(x * 0.07 + time * 0.8) * 0.6 * chopFactor;
 
-          // Sparse control points — clamp y so the line never breaches the ocean surface
-          const chartTop = waterY - chartRise;
-          const chartBot = waterY + chartDepth;
+          // Sparse control points — clamp to chart bounds
           const ctrl: { x: number; y: number }[] = prices.map((p, i) => ({
             x: (i / (prices.length - 1)) * width,
             y: Math.min(chartBot, Math.max(chartTop, priceToY(p) + ripple((i / (prices.length - 1)) * width))),
@@ -1583,23 +1592,6 @@ export default function BattleshipGame() {
             }
           }
 
-          // --- 2. Colored fill under the smoothed line, down to bottom ---
-          for (let i = 1; i < spline.length; i++) {
-            const p0 = spline[i - 1];
-            const p1 = spline[i];
-            // colour based on raw direction for that region
-            const srcIdx = Math.floor((i / spline.length) * (raw.length - 1));
-            const isUp = raw[Math.min(srcIdx + 1, raw.length - 1)] >= raw[srcIdx];
-            this.waveGraphics.fillStyle(isUp ? 0x00ff88 : 0xff3333, 0.07);
-            this.waveGraphics.beginPath();
-            this.waveGraphics.moveTo(p0.x, p0.y);
-            this.waveGraphics.lineTo(p1.x, p1.y);
-            this.waveGraphics.lineTo(p1.x, height);
-            this.waveGraphics.lineTo(p0.x, height);
-            this.waveGraphics.closePath();
-            this.waveGraphics.fillPath();
-          }
-
           // --- 3. Water overlay (submerged effect) ---
           this.waveGraphics.fillStyle(this.lightMode ? 0x2980b9 : 0x0a2040, this.lightMode ? 0.35 : 0.72);
           this.waveGraphics.fillRect(0, waterY, width, height - waterY);
@@ -1643,36 +1635,32 @@ export default function BattleshipGame() {
         private drawPriceScale(width: number, height: number, priceHistory: number[], currentPrice: number) {
           this.priceScaleGraphics.clear();
 
-          const waterY = height * 0.68;
-          const chartDepth = 55;
-          const chartRise  = 10;
-          const totalRange = chartDepth + chartRise;
+          const waterY  = height * 0.68;
+          const chartTop = this.chartTopY || waterY;
+          const chartBot = this.chartBotY || (height - 26);
+          const chartH   = chartBot - chartTop;
+          const viewMin  = this.chartViewMin;
+          const viewMax  = this.chartViewMax;
+          const viewRange = (viewMax - viewMin) || 1;
 
-          const prices = priceHistory.length >= 2 ? priceHistory : [currentPrice];
-          const minP = Math.min(...prices);
-          const maxP = Math.max(...prices);
-          const priceRange = maxP - minP || Math.max(minP * 0.002, 1e-8);
-
-          // Maps price → y (same formula as drawWaves)
+          // Same formulas as drawWaves
           const priceToY = (p: number) =>
-            (waterY + chartDepth) - ((p - minP) / priceRange) * totalRange;
-
-          // Inverts priceToY: maps y → price (for labelling arbitrary y positions)
+            chartBot - ((p - viewMin) / viewRange) * chartH;
           const yToPrice = (y: number) =>
-            minP + ((waterY + chartDepth - y) / totalRange) * priceRange;
+            viewMin + ((chartBot - y) / chartH) * viewRange;
 
           const axisX = width - 8;
 
-          // ── Vertical axis line: full water depth (waterY → height) ──
+          // ── Vertical axis line: sea surface → sea floor ──
           this.priceScaleGraphics.lineStyle(1, 0x1a3a5c, 0.8);
           this.priceScaleGraphics.beginPath();
-          this.priceScaleGraphics.moveTo(axisX, waterY);
-          this.priceScaleGraphics.lineTo(axisX, height);
+          this.priceScaleGraphics.moveTo(axisX, chartTop);
+          this.priceScaleGraphics.lineTo(axisX, chartBot);
           this.priceScaleGraphics.strokePath();
 
-          // ── 6 price ticks evenly spaced from waterY to sea floor ──
+          // ── 6 price ticks evenly spaced from chartTop to chartBot ──
           for (let i = 0; i < 6; i++) {
-            const tickY = waterY + (i / 5) * (height - waterY);
+            const tickY = chartTop + (i / 5) * chartH;
             const tickPrice = yToPrice(tickY);
 
             // Tick mark
@@ -1697,7 +1685,8 @@ export default function BattleshipGame() {
           }
 
           // ── Current price marker ──
-          const curY = priceToY(currentPrice);
+          const prices = priceHistory.length >= 2 ? priceHistory : [currentPrice];
+          const curY = Math.max(chartTop, Math.min(chartBot, priceToY(currentPrice)));
           const isUp = currentPrice >= prices[prices.length - 2];
           const markerColor = isUp ? 0x00cc44 : 0xff3333;
           const markerHex  = isUp ? '#00cc44' : '#ff3333';
@@ -1913,33 +1902,25 @@ export default function BattleshipGame() {
         private drawPriceZones(width: number, height: number) {
           this.overlayGraphics.clear();
 
-          if (!this.positionSide || this.entryPrice <= 0) return;
+          if (!this.positionSide || this.entryPrice <= 0) {
+            this.liqExplosionLabel?.setVisible(false);
+            return;
+          }
 
-          const waterY = height * 0.68;
-          const waveHeight = 40;
+          const chartBot  = this.chartBotY || (height - 26);
+          const chartH    = chartBot - (this.chartTopY || height * 0.68);
+          const viewRange = (this.chartViewMax - this.chartViewMin) || 1;
 
-          const minP = Math.min(...this.priceHistory);
-          const maxP = Math.max(...this.priceHistory);
-          const visibleRange = Math.max(maxP - minP, Math.max(minP * 0.005, 1e-8));
-
-          const priceToY = (price: number) => {
-            return waterY - ((price - minP) / visibleRange) * waveHeight;
-          };
+          const priceToY = (price: number) =>
+            chartBot - ((price - this.chartViewMin) / viewRange) * chartH;
 
           const entryY = priceToY(this.entryPrice);
-          const currentY = priceToY(this.currentPrice);
           const liqY = this.liquidationPrice > 0 ? priceToY(this.liquidationPrice) : 0;
 
-          if (this.positionSide === 'long') {
-            if (liqY > 0) {
-              this.overlayGraphics.fillStyle(0x00ff88, 0.06);
-              this.overlayGraphics.fillRect(0, entryY, width, Math.abs(liqY - entryY));
-            }
+          if (liqY > 0) {
+            this.liqExplosionLabel.setPosition(width - 22, liqY).setVisible(true);
           } else {
-            if (liqY > 0) {
-              this.overlayGraphics.fillStyle(0xff3333, 0.06);
-              this.overlayGraphics.fillRect(0, liqY, width, Math.abs(entryY - liqY));
-            }
+            this.liqExplosionLabel.setVisible(false);
           }
 
           const dashLen = 8;
@@ -1951,13 +1932,6 @@ export default function BattleshipGame() {
             this.overlayGraphics.strokePath();
           }
 
-          this.overlayGraphics.lineStyle(1, 0x00d4ff, 0.5);
-          for (let dx = 0; dx < width; dx += dashLen * 2) {
-            this.overlayGraphics.beginPath();
-            this.overlayGraphics.moveTo(dx, currentY);
-            this.overlayGraphics.lineTo(Math.min(dx + dashLen, width), currentY);
-            this.overlayGraphics.strokePath();
-          }
         }
 
         private drawCrosshair(x: number, y: number, time: number) {

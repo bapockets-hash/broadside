@@ -12,7 +12,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <PrivyProvider
       appId={process.env.NEXT_PUBLIC_PRIVY_APP_ID!}
       config={{
-        loginMethods: ['wallet', 'email'],
+        loginMethods: ['wallet'],
         appearance: {
           theme: 'dark',
           walletChainType: 'solana-only',
@@ -23,7 +23,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
         },
         embeddedWallets: {
           solana: {
-            createOnLogin: 'users-without-wallets',
+            createOnLogin: 'off',
           },
         },
       }}

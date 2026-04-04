@@ -17,6 +17,9 @@ export interface Order {
   leverage: number;
   status: 'open' | 'filled' | 'cancelled';
   entryPrice: number;
+  liquidationPrice: number | null; // null = not provided by API
+  margin: number | null;           // initial margin in USD
+  marginHealth: number | null;     // 0-100 if provided
   timestamp: number;
 }
 
@@ -31,6 +34,13 @@ export interface Position {
   unrealizedPnl: number;
   liquidationPrice: number;
   margin: number;
+}
+
+export interface ClosePositionParams {
+  side: 'long' | 'short';
+  margin: number;
+  leverage: number;
+  entryPrice: number;
 }
 
 export interface PriceData {
@@ -65,9 +75,12 @@ function buildMessage(type: string, payload: Record<string, unknown>, timestamp:
   return JSON.stringify(sortJsonKeys(messageObj));
 }
 
-/** Generate a simple client order ID */
+/** Generate a UUID v4 client order ID */
 function genOrderId(): string {
-  return `broadside-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
 }
 
 // ── Client ───────────────────────────────────────────────────────────────────
@@ -75,6 +88,43 @@ function genOrderId(): string {
 const DEMO_WALLET = 'demo-wallet';
 const BASE_URL = process.env.NEXT_PUBLIC_PACIFICA_API_URL || 'https://api.pacifica.fi/api/v1';
 const BUILDER_CODE = process.env.NEXT_PUBLIC_PACIFICA_BUILDER_CODE || '';
+
+export interface MarketInfo {
+  symbol: string;
+  lotSize: number;
+  maxLeverage: number;
+  minOrderSize: number;
+  maxOrderSize: number;
+}
+
+// Module-level cache shared across all client instances — fetched once per session
+let marketInfoCache: Record<string, MarketInfo> | null = null;
+let marketInfoFetch: Promise<Record<string, MarketInfo>> | null = null;
+
+async function fetchMarketInfo(): Promise<Record<string, MarketInfo>> {
+  if (marketInfoCache) return marketInfoCache;
+  if (marketInfoFetch) return marketInfoFetch;
+
+  marketInfoFetch = axios.get(`${BASE_URL}/info`).then(res => {
+    const entries: Record<string, MarketInfo> = {};
+    for (const item of res.data?.data ?? []) {
+      entries[item.symbol] = {
+        symbol: item.symbol,
+        lotSize: parseFloat(item.lot_size),
+        maxLeverage: parseInt(item.max_leverage),
+        minOrderSize: parseFloat(item.min_order_size),
+        maxOrderSize: parseFloat(item.max_order_size),
+      };
+    }
+    marketInfoCache = entries;
+    return entries;
+  }).catch(() => {
+    marketInfoFetch = null; // allow retry on next call
+    return {} as Record<string, MarketInfo>;
+  });
+
+  return marketInfoFetch;
+}
 
 export class PacificaClient {
   private walletAddress: string;
@@ -117,14 +167,20 @@ export class PacificaClient {
 
   // ── Leverage ───────────────────────────────────────────────────────────────
 
-  async setLeverage(symbol: string, leverage: number): Promise<void> {
-    if (this.isDemo) return;
+  async setLeverage(symbol: string, leverage: number): Promise<boolean> {
+    if (this.isDemo) return true;
     try {
-      const payload = { symbol, leverage };
-      const body = await this.buildSignedBody('set_leverage', payload);
+      // Type must be "update_leverage" per Pacifica docs
+      // builder_code is not a documented field for this endpoint — omit it
+      const payload = { symbol, leverage: Math.round(leverage) };
+      const body = await this.buildSignedBody('update_leverage', payload);
       await this.client.post('/account/leverage', body);
+      return true;
     } catch (err) {
-      console.warn('[Pacifica] setLeverage failed:', err);
+      if (axios.isAxiosError(err) && err.response) {
+        console.warn('[Pacifica] setLeverage error:', JSON.stringify(err.response.data));
+      }
+      return false;
     }
   }
 
@@ -135,12 +191,17 @@ export class PacificaClient {
 
     try {
       const btcSymbol = params.symbol.replace('-PERP', '');
-      await this.setLeverage(btcSymbol, params.leverage);
 
-      // Calculate BTC size from USD notional: notional = size * leverage, btcAmt = notional / price
+      // Calculate base token amount: notional / price, rounded to lot size
       const btcPrice = params.currentPrice || 100000;
       const notional = params.size * params.leverage;
-      const btcAmount = (notional / btcPrice).toFixed(6);
+      const markets = await fetchMarketInfo();
+      const lotSize = markets[btcSymbol]?.lotSize ?? 0.01;
+      const decimals = Math.max(0, Math.round(-Math.log10(lotSize)));
+      const btcAmount = (Math.floor(notional / btcPrice / lotSize) * lotSize).toFixed(decimals);
+
+      // Set leverage first — non-blocking on failure but must complete before signing order
+      await this.setLeverage(btcSymbol, params.leverage);
 
       const payload: Record<string, unknown> = {
         symbol: btcSymbol,
@@ -156,6 +217,7 @@ export class PacificaClient {
       const response = await this.client.post('/orders/create_market', body);
       const data = response.data;
 
+      // Pacifica only returns { order_id } — position details come from getPosition
       return {
         id: data.order_id || data.id || genOrderId(),
         symbol: params.symbol,
@@ -163,51 +225,64 @@ export class PacificaClient {
         size: params.size,
         leverage: params.leverage,
         status: 'filled',
-        entryPrice: parseFloat(data.fill_price || data.price || btcPrice.toString()),
+        entryPrice: btcPrice,
+        liquidationPrice: null,
+        margin: null,
+        marginHealth: null,
         timestamp: Date.now(),
       };
     } catch (err) {
-      console.warn('[Pacifica] placeOrder failed, using demo fallback:', err);
-      return this.demoOrder(params);
+      if (axios.isAxiosError(err) && err.response) {
+        console.error('[Pacifica] placeOrder error body:', JSON.stringify(err.response.data));
+        const msg = err.response.data?.message || err.response.data?.error || JSON.stringify(err.response.data);
+        throw new Error(`${err.response.status}: ${msg}`);
+      }
+      throw err;
     }
   }
 
-  async closePosition(symbol: string, currentPrice?: number): Promise<{ success: boolean; realizedPnl: number }> {
+  async closePosition(symbol: string, position: ClosePositionParams, currentPrice?: number): Promise<{ success: boolean; realizedPnl: number }> {
     if (this.isDemo) {
       return { success: true, realizedPnl: (Math.random() - 0.4) * 200 };
     }
 
     try {
       const btcSymbol = symbol.replace('-PERP', '');
-      const btcPrice = currentPrice || 100000;
+      const markets = await fetchMarketInfo();
+      const lotSize = markets[btcSymbol]?.lotSize ?? 0.01;
+      const decimals = Math.max(0, Math.round(-Math.log10(lotSize)));
 
-      // Close with a reduce-only market order in the opposite direction
-      // We don't know the exact size here, so we use a large amount with reduce_only=true
+      // Calculate actual base token amount from position: notional / entryPrice
+      const notional = position.margin * position.leverage;
+      const tokenAmount = (Math.floor(notional / position.entryPrice / lotSize) * lotSize).toFixed(decimals);
+
+      // Close side must be opposite to open side
+      const closeSide = position.side === 'long' ? 'ask' : 'bid';
+
       const payload: Record<string, unknown> = {
         symbol: btcSymbol,
         reduce_only: true,
-        amount: '999999', // max possible — exchange will cap at open position size
-        side: 'bid',      // will be overridden by reduce_only logic on exchange
+        amount: tokenAmount,
+        side: closeSide,
         slippage_percent: '2.0',
         client_order_id: genOrderId(),
         ...(BUILDER_CODE ? { builder_code: BUILDER_CODE } : {}),
       };
 
       const body = await this.buildSignedBody('create_market_order', payload);
+      console.log('[Pacifica] closePosition body:', JSON.stringify({ ...body, signature: (body.signature as string)?.slice(0, 16) + '...' }));
       const response = await this.client.post('/orders/create_market', body);
       const data = response.data;
 
       const realizedPnl = parseFloat(data.realized_pnl || data.pnl || '0');
       return { success: true, realizedPnl };
     } catch (err) {
-      console.warn('[Pacifica] closePosition failed:', err);
-      // Fall back to cancel all open orders
-      try {
-        await this.cancelAllOrders(symbol);
-      } catch {
-        // ignore
+      if (axios.isAxiosError(err) && err.response) {
+        console.error('[Pacifica] closePosition error body:', JSON.stringify(err.response.data));
+        const msg = err.response.data?.message || err.response.data?.error || JSON.stringify(err.response.data);
+        throw new Error(`${err.response.status}: ${msg}`);
       }
-      return { success: true, realizedPnl: 0 };
+      throw err;
     }
   }
 
@@ -321,6 +396,8 @@ export class PacificaClient {
   // ── Demo fallbacks ─────────────────────────────────────────────────────────
 
   private demoOrder(params: OrderParams): Order {
+    const entryPrice = params.currentPrice || 100000;
+    const liqMove = entryPrice / params.leverage;
     return {
       id: genOrderId(),
       symbol: params.symbol,
@@ -328,7 +405,12 @@ export class PacificaClient {
       size: params.size,
       leverage: params.leverage,
       status: 'filled',
-      entryPrice: params.currentPrice || 100000,
+      entryPrice,
+      liquidationPrice: params.side === 'buy'
+        ? entryPrice - liqMove
+        : entryPrice + liqMove,
+      margin: params.size,
+      marginHealth: 100,
       timestamp: Date.now(),
     };
   }
@@ -340,3 +422,5 @@ export function createPacificaClient(
 ): PacificaClient {
   return new PacificaClient(walletAddress, signMessage);
 }
+
+export { fetchMarketInfo };

@@ -4,6 +4,20 @@ import { createPacificaClient } from '@/lib/pacifica';
 import { soundEngine } from '@/lib/soundEngine';
 import { usePacificaSigner } from '@/hooks/usePacificaSigner';
 
+function parseWalletError(err: unknown): string {
+  const raw = err instanceof Error ? err.message
+    : (err && typeof err === 'object' && 'message' in err)
+      ? String((err as Record<string, unknown>).message)
+      : String(err);
+  if (raw.includes('UserKeyring not found')) {
+    return 'Wallet locked — open Backpack/Phantom, unlock it, and try again';
+  }
+  if (raw.includes('User rejected') || raw.includes('user rejected')) {
+    return 'Signature rejected';
+  }
+  return raw;
+}
+
 export function useFireCannons() {
   const { walletAddress, signFn } = usePacificaSigner();
   const {
@@ -57,21 +71,24 @@ export function useFireCannons() {
         currentPrice,
       });
 
-      // Calculate liquidation price
-      const liqMove = (1 / leverage) * currentPrice;
-      const liquidationPrice =
-        selectedSide === 'long'
-          ? currentPrice - liqMove
-          : currentPrice + liqMove;
+      const entryPrice = order.entryPrice || currentPrice;
+      const margin = order.margin ?? tradeSize;
+
+      // Set initial position using order data; getPosition will overwrite with
+      // Pacifica's authoritative values (liquidation price, margin health) shortly after
+      const estimatedLiq = selectedSide === 'long'
+        ? entryPrice - entryPrice / leverage
+        : entryPrice + entryPrice / leverage;
 
       setPosition({
         side: selectedSide,
         size: tradeSize,
-        entryPrice: order.entryPrice || currentPrice,
+        entryPrice,
         leverage,
-        marginHealth: 100,
+        margin,
+        marginHealth: order.marginHealth ?? 100,
         unrealizedPnl: 0,
-        liquidationPrice: Math.round(liquidationPrice),
+        liquidationPrice: order.liquidationPrice ?? estimatedLiq,
       });
 
       setGamePhase('active');
@@ -89,7 +106,8 @@ export function useFireCannons() {
       }
 
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+      console.error('[Broadside] FIRE FAILED raw error:', err);
+      const errorMsg = parseWalletError(err);
       addCombatLog(`FIRE FAILED: ${errorMsg}`, 'info');
       setGamePhase('idle');
     } finally {
@@ -142,7 +160,11 @@ export function useRetreat() {
 
     try {
       const client = createPacificaClient(walletAddress ?? 'demo-wallet', signFn);
-      const result = await client.closePosition(selectedSymbol + '-PERP', useGameStore.getState().currentPrice);
+      const result = await client.closePosition(
+        selectedSymbol + '-PERP',
+        { side: position.side, margin: position.margin, leverage: position.leverage, entryPrice: position.entryPrice },
+        useGameStore.getState().currentPrice,
+      );
 
       const pnl = position.unrealizedPnl;
       const pnlFormatted = `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
@@ -175,7 +197,8 @@ export function useRetreat() {
       setGamePhase('idle');
 
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+      console.error('[Broadside] RETREAT FAILED raw error:', err);
+      const errorMsg = parseWalletError(err);
       addCombatLog(`RETREAT FAILED: ${errorMsg}`, 'info');
       soundEngine.playDefeat();
       clearPosition();
@@ -201,11 +224,9 @@ export function useRetreat() {
 }
 
 export function usePositionMonitor() {
-  const { walletAddress } = usePacificaSigner();
   const {
     position,
     currentPrice,
-    selectedSymbol,
     setPosition,
     setGamePhase,
     clearPosition,
@@ -278,50 +299,44 @@ export function usePositionMonitor() {
         updateMissionProgress('survive_waves', 1);
       }
 
-      // Check for liquidation
-      if (pos.marginHealth <= 0 || pos.marginHealth < 2) {
+      // ── Client-side position update ─────────────────────────────────────────
+      // Pacifica's order response only returns order_id, so we calculate
+      // PnL, margin health, and liq price from known position parameters.
+
+      const tokenSize = (pos.margin * pos.leverage) / pos.entryPrice;
+      const rawPnl = pos.side === 'long'
+        ? (price - pos.entryPrice) * tokenSize
+        : (pos.entryPrice - price) * tokenSize;
+      const unrealizedPnl = Math.round(rawPnl * 100) / 100;
+
+      // Distance from current price to liquidation as % of the margin range
+      const liqPrice = pos.liquidationPrice;
+      const distToLiq = Math.abs(price - liqPrice);
+      const marginRange = Math.abs(pos.entryPrice - liqPrice);
+      const marginHealth = marginRange > 0
+        ? Math.max(0, Math.min(100, (distToLiq / marginRange) * 100))
+        : 100;
+
+      setPosition({ ...pos, unrealizedPnl, marginHealth });
+
+      // Liquidation check
+      if (marginHealth < 2) {
         setGamePhase('sunk');
         addCombatLog('💥 SHIP SUNK! POSITION LIQUIDATED!', 'defeat');
         soundEngine.playExplosion();
-        setTimeout(() => {
-          clearPosition();
-        }, 5000);
+        setTimeout(() => { clearPosition(); }, 5000);
         return;
       }
 
       // Low health warnings
-      if (pos.marginHealth < 20) {
-        addCombatLog(`⚠ CRITICAL! Hull at ${pos.marginHealth}%`, 'damage');
-      } else if (pos.marginHealth < 40) {
-        addCombatLog(`TORPEDO HIT! Hull at ${pos.marginHealth}%`, 'damage');
-      }
-
-      // Try to fetch real position from API
-      try {
-        if (!walletAddress) return;
-
-        const { createPacificaClient: createClient } = await import('@/lib/pacifica');
-        const client = createClient(walletAddress, async () => 'demo-sig');
-        const apiPosition = await client.getPosition(useGameStore.getState().selectedSymbol + '-PERP');
-
-        if (apiPosition) {
-          setPosition({
-            side: apiPosition.side,
-            size: apiPosition.size,
-            entryPrice: apiPosition.entryPrice,
-            leverage: apiPosition.leverage,
-            marginHealth: apiPosition.marginHealth,
-            unrealizedPnl: apiPosition.unrealizedPnl,
-            liquidationPrice: apiPosition.liquidationPrice,
-          });
-        }
-      } catch {
-        // Silently continue with client-side calculation
-        void price;
+      if (marginHealth < 20) {
+        addCombatLog(`⚠ CRITICAL! Hull at ${Math.round(marginHealth)}%`, 'damage');
+      } else if (marginHealth < 40) {
+        addCombatLog(`TORPEDO HIT! Hull at ${Math.round(marginHealth)}%`, 'damage');
       }
 
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [walletAddress, selectedSymbol, setPosition, setGamePhase, clearPosition, addCombatLog, updateMissionProgress]);
+  }, [setPosition, setGamePhase, clearPosition, addCombatLog, updateMissionProgress]);
 }

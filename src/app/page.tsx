@@ -4,7 +4,9 @@ import { useEffect, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import { useGameStore } from '@/store/gameStore';
 import { createPriceWebSocket } from '@/lib/priceWebSocket';
+import { fetchMarketInfo } from '@/lib/pacifica';
 import { useFireCannons, useRetreat, usePositionMonitor } from '@/hooks/useGameActions';
+import { useAccountPositions } from '@/hooks/useAccountPositions';
 import { useHistoricalPrices } from '@/hooks/useHistoricalPrices';
 import CommandPanel from '@/components/game/CommandPanel';
 import HUD from '@/components/game/HUD';
@@ -40,7 +42,11 @@ function GameContent() {
   const fireCannons = useFireCannons();
   const retreat = useRetreat();
   usePositionMonitor();
+  useAccountPositions();
   useHistoricalPrices();
+
+  // Pre-warm market info cache so first trade has no extra latency
+  useEffect(() => { fetchMarketInfo(); }, []);
 
   // Always start price feed — WebSocket with fallback to simulation
   useEffect(() => {

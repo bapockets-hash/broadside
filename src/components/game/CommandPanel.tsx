@@ -2,32 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useGameStore } from '@/store/gameStore';
-
-// Max leverage per symbol sourced from https://api.pacifica.fi/api/v1/info
-const SYMBOL_MAX_LEVERAGE: Record<string, number> = {
-  // 50x
-  BTC: 50, ETH: 50, USDJPY: 50, EURUSD: 50,
-  // 20x
-  SOL: 20, XRP: 20, HYPE: 20, SP500: 20,
-  // 15x
-  DOGE: 15,
-  // 10x
-  FARTCOIN: 10, ENA: 10, BNB: 10, SUI: 10, kBONK: 10, AAVE: 10,
-  LINK: 10, kPEPE: 10, LTC: 10, LDO: 10, UNI: 10, CRV: 10, AVAX: 10,
-  XPL: 10, PAXG: 10, ZEC: 10, TAO: 10, NEAR: 10, TRUMP: 10, BCH: 10,
-  XMR: 10, ADA: 10, ARB: 10, NVDA: 10, XAG: 10, JUP: 10, CL: 10,
-  GOOGL: 10, COPPER: 10, XAU: 10, PLTR: 10, NATGAS: 10, URNM: 10,
-  HOOD: 10, CRCL: 10, PLATINUM: 10, TSLA: 10,
-  // 5x
-  PUMP: 5, WLFI: 5, ASTER: 5, PENGU: 5, VIRTUAL: 5, ZK: 5, STRK: 5,
-  ICP: 5, WLD: 5, WIF: 5, LIT: 5, ZRO: 5,
-  // 3x
-  '2Z': 3, MON: 3, MEGA: 3, BP: 3, PIPPIN: 3,
-};
-
-function getMaxLeverage(symbol: string): number {
-  return SYMBOL_MAX_LEVERAGE[symbol] ?? 10;
-}
+import { fetchMarketInfo, type MarketInfo } from '@/lib/pacifica';
 
 // Preset buttons tuned per leverage tier
 function getLeveragePresets(maxLev: number): number[] {
@@ -62,6 +37,24 @@ export default function CommandPanel({ onFire, onRetreat }: CommandPanelProps) {
   } = useGameStore();
 
   const [selectorOpen, setSelectorOpen] = useState(false);
+  const [marketInfoMap, setMarketInfoMap] = useState<Record<string, MarketInfo>>({});
+
+  useEffect(() => {
+    fetchMarketInfo().then(setMarketInfoMap);
+  }, []);
+
+  function getMaxLeverage(symbol: string): number {
+    return marketInfoMap[symbol]?.maxLeverage ?? 10;
+  }
+
+  function getLeveragePresets(maxLev: number): number[] {
+    if (maxLev >= 50) return [1, 5, 10, 25, 50];
+    if (maxLev >= 20) return [1, 3, 5, 10, 20];
+    if (maxLev >= 15) return [1, 3, 5, 10, 15];
+    if (maxLev >= 10) return [1, 2, 3, 5, 10];
+    if (maxLev >= 5)  return [1, 2, 3, 5];
+    return [1, 2, 3];
+  }
 
   // Category membership — anything Pacifica sends that isn't here falls into OTHER
   const CRYPTO  = new Set(['BTC','ETH','SOL','BNB','AVAX','XRP','DOGE','ADA','LINK','SUI','TON','NEAR','LTC','BCH','ICP','TAO','STRK','ZRO','WLD','ZK','ENA','ZEC','XMR','PAXG','VIRTUAL','LINEA','URNM','HYPE']);
@@ -400,7 +393,7 @@ export default function CommandPanel({ onFire, onRetreat }: CommandPanelProps) {
           <input
             type="number"
             value={tradeSize}
-            onChange={(e) => setTradeSize(Math.max(10, Number(e.target.value)))}
+            onChange={(e) => setTradeSize(Math.max(1, Number(e.target.value)))}
             disabled={gamePhase === 'active' || gamePhase === 'sunk'}
             className="flex-1 px-2 py-1 rounded text-sm font-bold outline-none"
             style={{
@@ -416,7 +409,7 @@ export default function CommandPanel({ onFire, onRetreat }: CommandPanelProps) {
 
         {/* Quick size buttons */}
         <div className="flex gap-1">
-          {[50, 100, 500, 1000].map(size => (
+          {[1, 5, 10, 20].map(size => (
             <button
               key={size}
               onClick={() => setTradeSize(size)}

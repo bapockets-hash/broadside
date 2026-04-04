@@ -149,8 +149,10 @@ export default function HUD() {
   };
 
   const fundingPct = marketStats ? (marketStats.funding * 100).toFixed(4) : null;
-  const oiUsd = marketStats ? (marketStats.openInterest * currentPrice / 1e6).toFixed(2) : null;
-  const vol24hM = marketStats ? (marketStats.volume24h / 1e6).toFixed(2) : null;
+  const fmtUsd = (usd: number) =>
+    usd >= 1e6 ? `$${(usd / 1e6).toFixed(2)}M` : `$${(usd / 1e3).toFixed(2)}K`;
+  const oiFmt = marketStats ? fmtUsd(marketStats.openInterest * currentPrice) : null;
+  const volFmt = marketStats ? fmtUsd(marketStats.volume24h) : null;
   const fmtPrice = (p: number) => {
     if (p >= 10000) return `$${Math.round(p).toLocaleString()}`;
     if (p >= 1000)  return `$${p.toFixed(1)}`;
@@ -163,9 +165,8 @@ export default function HUD() {
   const tickerItems = [
     `${selectedSymbol}-PERP ${fmtPrice(currentPrice)}`,
     fundingPct !== null ? `FUNDING ${fundingPct}%` : 'FUNDING —',
-    oiUsd !== null ? `OI $${oiUsd}M` : 'OI —',
-    vol24hM !== null ? `VOL 24H $${vol24hM}M` : 'VOL 24H —',
-    'POWERED BY PACIFICA',
+    oiFmt !== null ? `OI ${oiFmt}` : 'OI —',
+    volFmt !== null ? `VOL 24H ${volFmt}` : 'VOL 24H —',
   ];
   const tickerText = tickerItems.join('  |  ');
 
@@ -182,6 +183,10 @@ export default function HUD() {
     signDisplay: 'always',
     maximumFractionDigits: 2,
   }).format(displayPnl);
+
+  const pnlPct = position?.margin
+    ? ((pnlTarget / position.margin) * 100).toFixed(2)
+    : null;
 
   return (
     <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 10 }}>
@@ -204,17 +209,18 @@ export default function HUD() {
       >
         <div
           style={{
-            display: 'inline-block',
+            display: 'flex',
+            width: '200%',
             whiteSpace: 'nowrap',
-            animation: 'marquee 22s linear infinite',
+            animation: 'marquee 24.2s linear infinite',
             fontFamily: 'monospace',
             fontSize: '10px',
             color: '#00d4ff',
             lineHeight: 1,
-            paddingLeft: '8px',
           }}
         >
-          {tickerText}  |  {tickerText}
+          <span style={{ width: '50%' }}>{tickerText}</span>
+          <span style={{ width: '50%' }}>{tickerText}</span>
         </div>
       </div>
 
@@ -297,7 +303,7 @@ export default function HUD() {
               ))}
             </div>
             <span className="text-xs font-bold" style={{ color: healthColor }}>
-              {marginHealth}%
+              {Math.round(marginHealth)}%
             </span>
           </div>
 
@@ -382,6 +388,10 @@ export default function HUD() {
                 <span style={{ color: lightMode ? '#445566' : '#888' }}>SIZE</span>
                 <span style={{ color: lightMode ? '#1a2a3a' : '#aaa' }}>${position.size}</span>
               </div>
+              <div className="flex justify-between gap-3">
+                <span style={{ color: lightMode ? '#445566' : '#888' }}>MARGIN</span>
+                <span style={{ color: lightMode ? '#1a2a3a' : '#aaa' }}>${position.margin.toFixed(2)}</span>
+              </div>
               <div
                 className="flex justify-between gap-3 border-t mt-1 pt-1"
                 style={{ borderColor: lightMode ? 'rgba(0,100,200,0.25)' : 'rgba(0,212,255,0.2)' }}
@@ -395,6 +405,11 @@ export default function HUD() {
                   }}
                 >
                   {formattedPnl}
+                  {pnlPct !== null && (
+                    <span style={{ marginLeft: '4px', fontSize: '0.85em', opacity: 0.8 }}>
+                      ({pnlTarget >= 0 ? '+' : ''}{pnlPct}%)
+                    </span>
+                  )}
                   {gamePhase === 'active' && (
                     <span
                       style={{
