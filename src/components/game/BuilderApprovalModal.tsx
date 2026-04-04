@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { createPacificaClient } from '@/lib/pacifica';
 import { usePacificaSigner } from '@/hooks/usePacificaSigner';
 
-const BUILDER_CODE = process.env.NEXT_PUBLIC_PACIFICA_BUILDER_CODE || '';
+const BUILDER_CODE = (process.env.NEXT_PUBLIC_PACIFICA_BUILDER_CODE || '').trim();
 const MAX_FEE_RATE = '0.001'; // 0.1%
 
 function localKey(wallet: string) {

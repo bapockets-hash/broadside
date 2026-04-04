@@ -88,7 +88,7 @@ function genOrderId(): string {
 
 const DEMO_WALLET = 'demo-wallet';
 const BASE_URL = process.env.NEXT_PUBLIC_PACIFICA_API_URL || 'https://api.pacifica.fi/api/v1';
-const BUILDER_CODE = process.env.NEXT_PUBLIC_PACIFICA_BUILDER_CODE || '';
+const BUILDER_CODE = (process.env.NEXT_PUBLIC_PACIFICA_BUILDER_CODE || '').trim();
 
 export interface MarketInfo {
   symbol: string;
