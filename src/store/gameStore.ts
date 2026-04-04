@@ -18,6 +18,7 @@ export interface Position {
   marginHealth: number;    // 0-100, 100=healthy, 0=liquidated
   unrealizedPnl: number;
   liquidationPrice: number;
+  openedAt: number;        // ms timestamp when position was opened (from Pacifica created_at)
 }
 
 export type GamePhase = 'idle' | 'aiming' | 'firing' | 'active' | 'retreating' | 'sunk';

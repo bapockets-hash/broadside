@@ -4,6 +4,31 @@ import { createPacificaClient } from '@/lib/pacifica';
 import { soundEngine } from '@/lib/soundEngine';
 import { usePacificaSigner } from '@/hooks/usePacificaSigner';
 
+/** Fetch authoritative position data from Pacifica and sync liq price + margin */
+async function syncPosition(
+  walletAddress: string,
+  signFn: (msg: string) => Promise<string>,
+  symbol: string
+) {
+  try {
+    const client = createPacificaClient(walletAddress, signFn);
+    const pos = await client.getPosition(symbol + '-PERP');
+    if (!pos) return;
+    const store = useGameStore.getState();
+    if (!store.position) return;
+    store.setPosition({
+      ...store.position,
+      liquidationPrice: pos.liquidationPrice > 0 ? pos.liquidationPrice : store.position.liquidationPrice,
+      marginHealth: pos.marginHealth,
+      margin: pos.margin,
+      // Use Pacifica's created_at only if we don't already have an openedAt
+      openedAt: store.position.openedAt || pos.openedAt,
+    });
+  } catch {
+    // silently ignore — stale estimate stays
+  }
+}
+
 function parseWalletError(err: unknown): string {
   const raw = err instanceof Error ? err.message
     : (err && typeof err === 'object' && 'message' in err)
@@ -74,24 +99,25 @@ export function useFireCannons() {
       const entryPrice = order.entryPrice || currentPrice;
       const margin = order.margin ?? tradeSize;
 
-      // Set initial position using order data; getPosition will overwrite with
-      // Pacifica's authoritative values (liquidation price, margin health) shortly after
-      const estimatedLiq = selectedSide === 'long'
-        ? entryPrice - entryPrice / leverage
-        : entryPrice + entryPrice / leverage;
-
+      // Set initial position — liquidationPrice starts at 0 until syncPosition
+      // fetches the authoritative value from Pacifica (~2.5s after order settles)
       setPosition({
         side: selectedSide,
         size: tradeSize,
         entryPrice,
         leverage,
         margin,
-        marginHealth: order.marginHealth ?? 100,
+        marginHealth: 100,
         unrealizedPnl: 0,
-        liquidationPrice: order.liquidationPrice ?? estimatedLiq,
+        liquidationPrice: 0,
+        openedAt: Date.now(),
       });
 
       setGamePhase('active');
+
+      // Fetch authoritative liq price from Pacifica (delayed to let order settle)
+      setTimeout(() => syncPosition(walletAddress ?? 'demo-wallet', signFn, selectedSymbol), 2500);
+      setTimeout(() => syncPosition(walletAddress ?? 'demo-wallet', signFn, selectedSymbol), 8000);
 
       addCombatLog(
         `${selectedSide === 'short' ? '⚔ CANNONS FIRED!' : '🛡 SHIELDS RAISED!'} ${leverage}x $${tradeSize}`,
@@ -234,7 +260,9 @@ export function usePositionMonitor() {
     gamePhase,
     incrementCombo,
     updateMissionProgress,
+    selectedSymbol,
   } = useGameStore();
+  const { walletAddress, signFn } = usePacificaSigner();
 
   const positionRef = useRef(position);
   const gamePhasRef = useRef(gamePhase);
@@ -286,7 +314,8 @@ export function usePositionMonitor() {
 
   useEffect(() => {
     const interval = setInterval(async () => {
-      const pos = positionRef.current;
+      // Always read latest position directly from store to avoid stale ref overwrites
+      const pos = useGameStore.getState().position;
       const phase = gamePhasRef.current;
       const price = currentPriceRef.current;
 
@@ -299,10 +328,6 @@ export function usePositionMonitor() {
         updateMissionProgress('survive_waves', 1);
       }
 
-      // ── Client-side position update ─────────────────────────────────────────
-      // Pacifica's order response only returns order_id, so we calculate
-      // PnL, margin health, and liq price from known position parameters.
-
       const tokenSize = (pos.margin * pos.leverage) / pos.entryPrice;
       const rawPnl = pos.side === 'long'
         ? (price - pos.entryPrice) * tokenSize
@@ -313,11 +338,16 @@ export function usePositionMonitor() {
       const liqPrice = pos.liquidationPrice;
       const distToLiq = Math.abs(price - liqPrice);
       const marginRange = Math.abs(pos.entryPrice - liqPrice);
-      const marginHealth = marginRange > 0
+      const marginHealth = liqPrice > 0 && marginRange > 0
         ? Math.max(0, Math.min(100, (distToLiq / marginRange) * 100))
         : 100;
 
       setPosition({ ...pos, unrealizedPnl, marginHealth });
+
+      // Every ~30s sync authoritative liq price from Pacifica
+      if (waveCountRef.current % 10 === 0 && walletAddress) {
+        syncPosition(walletAddress, signFn, selectedSymbol);
+      }
 
       // Liquidation check
       if (marginHealth < 2) {
@@ -338,5 +368,5 @@ export function usePositionMonitor() {
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [setPosition, setGamePhase, clearPosition, addCombatLog, updateMissionProgress]);
+  }, [setPosition, setGamePhase, clearPosition, addCombatLog, updateMissionProgress, walletAddress, signFn, selectedSymbol]);
 }

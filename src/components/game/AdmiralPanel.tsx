@@ -4,6 +4,7 @@ import { useGameStore } from '@/store/gameStore';
 import { useEffect, useRef, useState } from 'react';
 import { soundEngine } from '@/lib/soundEngine';
 import { usePrivy } from '@privy-io/react-auth';
+import { useAccountBalance } from '@/hooks/useAccountBalance';
 
 const RANK_MAX_XP: Record<string, number> = {
   'Recruit': 100,
@@ -54,6 +55,7 @@ interface MissionToastState {
 export default function AdmiralPanel() {
   const { xp, rank, missions, missionProgress, sessionStats, combatLog, lightMode } = useGameStore();
   const { logout, user } = usePrivy();
+  const { balance } = useAccountBalance();
   const walletAddress = user?.wallet?.address;
   const [toast, setToast] = useState<MissionToastState | null>(null);
   const prevMissionsRef = useRef(missions);
@@ -302,7 +304,7 @@ export default function AdmiralPanel() {
       </div>
 
       {/* Session Stats */}
-      <div className="px-3 py-2 flex-1">
+      <div className="px-3 py-2">
         <div
           className="text-xs font-bold tracking-widest mb-2"
           style={{ color: lightMode ? '#0055aa' : '#00d4ff', fontFamily: 'var(--font-orbitron, monospace)' }}
@@ -334,7 +336,7 @@ export default function AdmiralPanel() {
 
       {/* Combat Log */}
       <div
-        className="px-3 py-2"
+        className="px-3 py-2 flex-1 flex flex-col min-h-0"
         style={{ borderTop: lightMode ? '1px solid rgba(0,100,200,0.2)' : '1px solid rgba(0,212,255,0.2)' }}
       >
         <div
@@ -343,8 +345,8 @@ export default function AdmiralPanel() {
         >
           COMBAT LOG
         </div>
-        <div className="space-y-1">
-          {combatLog.slice(0, 5).map((entry, i) => {
+        <div className="space-y-1 overflow-y-auto flex-1">
+          {combatLog.slice(0, 20).map((entry, i) => {
             const colors: Record<string, string> = {
               attack: lightMode ? '#cc2222' : '#ff3333',
               defend: lightMode ? '#007744' : '#00ff88',
@@ -374,6 +376,33 @@ export default function AdmiralPanel() {
               </div>
             );
           })}
+        </div>
+      </div>
+
+      {/* Available Balance */}
+      <div
+        className="px-3 py-2"
+        style={{ borderTop: lightMode ? '1px solid rgba(0,100,200,0.2)' : '1px solid rgba(0,212,255,0.2)' }}
+      >
+        <div
+          className="text-xs font-bold tracking-widest mb-2"
+          style={{ color: lightMode ? '#0055aa' : '#00d4ff', fontFamily: 'var(--font-orbitron, monospace)' }}
+        >
+          AMMUNITION
+        </div>
+        <div
+          className="rounded p-2"
+          style={{ background: lightMode ? 'rgba(0,0,0,0.05)' : 'rgba(0,0,0,0.3)', border: lightMode ? '1px solid rgba(0,100,200,0.2)' : '1px solid rgba(0,212,255,0.15)' }}
+        >
+          <div className="flex justify-between text-xs items-center">
+            <span style={{ color: lightMode ? '#556677' : '#555' }}>USDC</span>
+            <span style={{
+              color: balance != null ? (lightMode ? '#007744' : '#00ff88') : (lightMode ? '#556677' : '#555'),
+              fontFamily: 'var(--font-share-tech-mono, monospace)',
+            }}>
+              {balance != null ? `$${balance.toFixed(2)}` : '—'}
+            </span>
+          </div>
         </div>
       </div>
 

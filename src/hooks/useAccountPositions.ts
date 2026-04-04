@@ -109,7 +109,6 @@ export function useAccountPositions() {
 
           if (!frame) return;
 
-          console.log('[AccountPositions] frame:', JSON.stringify(frame));
 
           // Try to apply immediately; if position not set yet, buffer it
           if (!applyFrame(frame)) {

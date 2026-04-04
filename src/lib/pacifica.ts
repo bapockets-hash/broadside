@@ -34,6 +34,7 @@ export interface Position {
   unrealizedPnl: number;
   liquidationPrice: number;
   margin: number;
+  openedAt: number;
 }
 
 export interface ClosePositionParams {
@@ -304,42 +305,40 @@ export class PacificaClient {
     if (this.isDemo) return null;
     try {
       const btcSymbol = symbol.replace('-PERP', '');
-      const payload = { symbol: btcSymbol };
-      const body = await this.buildSignedBody('get_position', payload);
-      const response = await this.client.post('/account/positions', body);
-      const data = response.data;
+      const response = await this.client.get(`/positions?account=${this.walletAddress}`);
+      const list: Record<string, unknown>[] = response.data?.data ?? [];
+      const data = list.find(p =>
+        String(p.symbol) === btcSymbol ||
+        String(p.symbol) === btcSymbol + '-PERP' ||
+        String(p.symbol).replace('-PERP', '') === btcSymbol
+      );
 
-      if (!data || data.size === 0 || data.amount === '0') return null;
+      if (!data || data.amount === '0' || !data.amount) return null;
 
       const side: 'long' | 'short' = data.side === 'long' || data.side === 'bid' ? 'long' : 'short';
-      const entryPrice = parseFloat(data.entry_price || data.avg_price || '0');
-      const markPrice = parseFloat(data.mark_price || data.price || entryPrice.toString());
-      const leverage = parseFloat(data.leverage || '1');
-      const size = parseFloat(data.size || data.amount || '0');
-      const unrealizedPnl = parseFloat(data.unrealized_pnl || data.pnl || '0');
-      const liqPrice = parseFloat(data.liquidation_price || data.liq_price || '0');
-
-      // Calculate margin health as % distance to liquidation
-      let marginHealth = 100;
-      if (liqPrice > 0 && markPrice > 0) {
-        const distToLiq = Math.abs(markPrice - liqPrice);
-        const totalRange = markPrice / leverage;
-        marginHealth = Math.max(0, Math.min(100, (distToLiq / totalRange) * 100));
-      }
+      const entryPrice = parseFloat(String(data.entry_price || '0'));
+      const size = parseFloat(String(data.amount || '0'));
+      const margin = parseFloat(String(data.margin || '0')) || size;
+      const liqPrice = parseFloat(String(data.liquidation_price || '0'));
+      const openedAt = typeof data.created_at === 'number' ? data.created_at : Date.now();
 
       return {
         symbol,
         side,
         size,
         entryPrice,
-        markPrice,
-        leverage,
-        marginHealth,
-        unrealizedPnl,
+        markPrice: entryPrice,
+        leverage: margin > 0 ? size / margin : 1,
+        marginHealth: 100,
+        unrealizedPnl: 0,
         liquidationPrice: liqPrice,
-        margin: size / leverage,
+        margin,
+        openedAt,
       };
-    } catch {
+    } catch (err) {
+      if (axios.isAxiosError(err) && err.response) {
+        console.warn('[Pacifica] getPosition error:', err.response.status, JSON.stringify(err.response.data));
+      }
       return null;
     }
   }
@@ -376,6 +375,19 @@ export class PacificaClient {
       ...payload,
     };
     await this.client.post('/account/builder_codes/approve', body);
+  }
+
+  async getBalance(): Promise<number | null> {
+    if (this.isDemo) return null;
+    try {
+      const res = await this.client.get(`/account?account=${this.walletAddress}`);
+      const data = res.data?.data;
+      const raw = data?.available_to_spend ?? data?.balance ?? null;
+      if (raw == null) return null;
+      return parseFloat(raw);
+    } catch {
+      return null;
+    }
   }
 
   async getPrice(symbol: string): Promise<PriceData> {

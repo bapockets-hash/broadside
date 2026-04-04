@@ -119,6 +119,7 @@ export default function BattleshipGame() {
         private comboText!: any;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         private liqExplosionLabel!: any;
+        private entryTimestamp = 0;
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         private hoverGraphics!: any;
@@ -514,6 +515,7 @@ export default function BattleshipGame() {
             fontSize: '18px',
           }).setOrigin(0.5, 0.5).setDepth(6).setVisible(false);
 
+
           // Phase text (hidden — phase shown in HUD instead)
           this.phaseText = this.add.text(0, 0, '').setVisible(false);
 
@@ -542,6 +544,7 @@ export default function BattleshipGame() {
             entryPrice: number;
             positionSide: 'long' | 'short' | null;
             liquidationPrice: number;
+            openedAt: number;
             timeframe: string;
             lightMode: boolean;
             selectedSymbol: string;
@@ -579,6 +582,7 @@ export default function BattleshipGame() {
             }
             this.unrealizedPnl = state.unrealizedPnl;
             this.entryPrice = state.entryPrice;
+            this.entryTimestamp = state.openedAt;
             this.positionSide = state.positionSide;
             this.liquidationPrice = state.liquidationPrice;
 
@@ -1067,12 +1071,6 @@ export default function BattleshipGame() {
           // --- Main deck ---
           this.shipGraphics.fillStyle(superColor, alpha);
           this.shipGraphics.fillRect(-65, -4, 130, 6);
-
-          // --- Wake trail (behind stern) ---
-          this.shipGraphics.fillStyle(0xffffff, 0.12);
-          this.shipGraphics.fillRect(-80, 7, 12, 3);
-          this.shipGraphics.fillStyle(0xffffff, 0.08);
-          this.shipGraphics.fillRect(-95, 5, 16, 2);
 
           // --- Forward gun turret ---
           this.shipGraphics.fillStyle(darkAccent, alpha);
@@ -1691,13 +1689,6 @@ export default function BattleshipGame() {
           const markerColor = isUp ? 0x00cc44 : 0xff3333;
           const markerHex  = isUp ? '#00cc44' : '#ff3333';
 
-          // Full-width solid horizontal rule at current price
-          this.priceScaleGraphics.lineStyle(1.5, markerColor, 0.55);
-          this.priceScaleGraphics.beginPath();
-          this.priceScaleGraphics.moveTo(0, curY);
-          this.priceScaleGraphics.lineTo(axisX, curY);
-          this.priceScaleGraphics.strokePath();
-
           // Triangle pointer on axis
           this.priceScaleGraphics.fillStyle(markerColor, 1);
           this.priceScaleGraphics.beginPath();
@@ -1917,19 +1908,34 @@ export default function BattleshipGame() {
           const entryY = priceToY(this.entryPrice);
           const liqY = this.liquidationPrice > 0 ? priceToY(this.liquidationPrice) : 0;
 
-          if (liqY > 0) {
-            this.liqExplosionLabel.setPosition(width - 22, liqY).setVisible(true);
+          // Only show 💥 when hull is getting critical (< 40% health)
+          if (liqY > 0 && this.marginHealth < 40) {
+            const danger = 1 - this.marginHealth / 40; // 0→1 as health drops 40→0
+            const pulse = 0.5 + 0.5 * Math.sin(this.waveTime * (4 + danger * 6));
+            const scale = 0.8 + 0.4 * danger + 0.2 * pulse;
+            this.liqExplosionLabel
+              .setPosition(width - 22, liqY)
+              .setScale(scale)
+              .setAlpha(0.5 + 0.5 * pulse)
+              .setVisible(true);
           } else {
             this.liqExplosionLabel.setVisible(false);
           }
 
-          const dashLen = 8;
-          this.overlayGraphics.lineStyle(1, 0xffffff, 0.5);
-          for (let dx = 0; dx < width; dx += dashLen * 2) {
-            this.overlayGraphics.beginPath();
-            this.overlayGraphics.moveTo(dx, entryY);
-            this.overlayGraphics.lineTo(Math.min(dx + dashLen, width), entryY);
-            this.overlayGraphics.strokePath();
+          // Entry dot — position on x-axis via linear interpolation over timestamp span
+          const timestamps = this.priceTimestamps;
+          const n = timestamps.length;
+          if (n >= 2 && this.entryTimestamp > 0) {
+            const oldest = timestamps[0];
+            const newest = timestamps[n - 1];
+            const span = newest - oldest;
+            const t = span > 0
+              ? Math.max(0, Math.min(1, (this.entryTimestamp - oldest) / span))
+              : 1;
+            const dotX = t * width;
+            const dotColor = this.positionSide === 'long' ? 0x00ff88 : 0xff3333;
+            this.overlayGraphics.fillStyle(dotColor, 1);
+            this.overlayGraphics.fillCircle(dotX, entryY, 5);
           }
 
         }
@@ -2181,15 +2187,6 @@ export default function BattleshipGame() {
             this.particleGraphics.fillRect(d.x, d.y, d.w, d.h);
           });
 
-          // Wake particles
-          this.wakeParticles = this.wakeParticles.filter(p => p.life > 0);
-          this.wakeParticles.forEach(p => {
-            p.x += p.vx;
-            p.life -= 0.018;
-            p.size += 0.08;
-            this.particleGraphics.fillStyle(0xaaddff, p.life * p.alpha * 0.6);
-            this.particleGraphics.fillEllipse(p.x, p.y, p.size * 2, p.size * 0.5);
-          });
 
           // Spark particles
           this.sparkParticles = this.sparkParticles.filter(p => p.life > 0);
@@ -2593,10 +2590,6 @@ export default function BattleshipGame() {
             this.waveTime
           );
 
-          // Emit wake — faster/wider when profitable
-          const wakeSpeed = this.gamePhase === 'active' && this.unrealizedPnl > 0 ? 1.5 : 0.5;
-          this.emitWake(shipX + rockX, this.shipY + rockY, wakeSpeed);
-
           // Emit sparks when hull is critically damaged
           if (this.marginHealth < 40) {
             this.emitSparks(shipX + rockX + (Math.random() - 0.5) * 60, this.shipY + rockY - 5);
@@ -2695,6 +2688,7 @@ export default function BattleshipGame() {
       entryPrice: store.position?.entryPrice ?? 0,
       positionSide: store.position?.side ?? null,
       liquidationPrice: store.position?.liquidationPrice ?? 0,
+      openedAt: store.position?.openedAt ?? 0,
       timeframe: store.timeframe,
       lightMode: store.lightMode,
       selectedSymbol: store.selectedSymbol,
