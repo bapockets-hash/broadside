@@ -8,7 +8,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
 
-  if (!mounted) return <>{children}</>;
+  if (!mounted) return null;
 
   // Must be called after mount — requires browser environment
   const solanaConnectors = toSolanaWalletConnectors({ shouldAutoConnect: false });
