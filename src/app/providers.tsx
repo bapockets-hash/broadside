@@ -2,11 +2,15 @@
 
 import { PrivyProvider } from '@privy-io/react-auth';
 import { toSolanaWalletConnectors } from '@privy-io/react-auth/solana';
+import { useEffect, useState } from 'react';
 
 export function Providers({ children }: { children: React.ReactNode }) {
-  // Initialize connectors inside the render function so they run client-side
-  // after wallet extensions (Phantom, Backpack) have injected into the page
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+
   const solanaConnectors = toSolanaWalletConnectors({ shouldAutoConnect: false });
+
+  if (!mounted) return <>{children}</>;
 
   return (
     <PrivyProvider
