@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic';
+
 import type { Metadata } from "next";
 import { Inter, Orbitron, Share_Tech_Mono } from "next/font/google";
 import "./globals.css";
