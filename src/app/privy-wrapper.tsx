@@ -1,6 +1,7 @@
 'use client';
 
 import { PrivyProvider } from '@privy-io/react-auth';
+import { toSolanaWalletConnectors } from '@privy-io/react-auth/solana';
 import { ReactNode, Component, useEffect } from 'react';
 
 // Suppress Privy's async initEnrollmentWithSms error which fires in production
@@ -43,6 +44,7 @@ class PrivyErrorBoundary extends Component<{ children: ReactNode }, { crashed: b
 
 function PrivyMount({ children }: { children: ReactNode }) {
   usePrivyErrorSuppressor();
+  const solanaConnectors = toSolanaWalletConnectors({ shouldAutoConnect: false });
   return (
     <PrivyProvider
       appId={process.env.NEXT_PUBLIC_PRIVY_APP_ID!}
@@ -50,7 +52,14 @@ function PrivyMount({ children }: { children: ReactNode }) {
         loginMethods: ['wallet'],
         appearance: {
           theme: 'dark',
-          walletList: ['phantom', 'backpack'],
+          walletChainType: 'solana-only',
+          walletList: ['detected_solana_wallets', 'phantom', 'backpack'],
+        },
+        externalWallets: {
+          solana: { connectors: solanaConnectors },
+        },
+        embeddedWallets: {
+          solana: { createOnLogin: 'off' },
         },
       }}
     >
