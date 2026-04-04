@@ -188,7 +188,7 @@ export function useRetreat() {
       const client = createPacificaClient(walletAddress ?? 'demo-wallet', signFn);
       const result = await client.closePosition(
         selectedSymbol + '-PERP',
-        { side: position.side, margin: position.margin, leverage: position.leverage, entryPrice: position.entryPrice },
+        { side: position.side, size: position.size, entryPrice: position.entryPrice },
         useGameStore.getState().currentPrice,
       );
 

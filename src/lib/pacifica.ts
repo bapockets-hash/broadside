@@ -39,8 +39,7 @@ export interface Position {
 
 export interface ClosePositionParams {
   side: 'long' | 'short';
-  margin: number;
-  leverage: number;
+  size: number;      // token amount (e.g. 0.0244 ETH)
   entryPrice: number;
 }
 
@@ -253,9 +252,8 @@ export class PacificaClient {
       const lotSize = markets[btcSymbol]?.lotSize ?? 0.01;
       const decimals = Math.max(0, Math.round(-Math.log10(lotSize)));
 
-      // Calculate actual base token amount from position: notional / entryPrice
-      const notional = position.margin * position.leverage;
-      const tokenAmount = (Math.floor(notional / position.entryPrice / lotSize) * lotSize).toFixed(decimals);
+      // Use the actual token size from the position (e.g. 0.0244 ETH), rounded to lot size
+      const tokenAmount = (Math.floor(position.size / lotSize) * lotSize).toFixed(decimals);
 
       // Close side must be opposite to open side
       const closeSide = position.side === 'long' ? 'ask' : 'bid';
@@ -271,7 +269,6 @@ export class PacificaClient {
       };
 
       const body = await this.buildSignedBody('create_market_order', payload);
-      console.log('[Pacifica] closePosition body:', JSON.stringify({ ...body, signature: (body.signature as string)?.slice(0, 16) + '...' }));
       const response = await this.client.post('/orders/create_market', body);
       const data = response.data;
 
