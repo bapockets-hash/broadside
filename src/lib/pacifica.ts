@@ -152,7 +152,7 @@ export class PacificaClient {
     payload: Record<string, unknown>
   ): Promise<Record<string, unknown>> {
     const timestamp = Date.now();
-    const expiryWindow = 5000;
+    const expiryWindow = 30000;
 
     const message = buildMessage(type, payload, timestamp, expiryWindow);
     const signature = await this.signMessage(message);
@@ -201,8 +201,8 @@ export class PacificaClient {
       const decimals = Math.max(0, Math.round(-Math.log10(lotSize)));
       const btcAmount = (Math.floor(notional / btcPrice / lotSize) * lotSize).toFixed(decimals);
 
-      // Set leverage first — non-blocking on failure but must complete before signing order
-      await this.setLeverage(btcSymbol, params.leverage);
+      // Fire leverage update in the background — does not need to complete before the order
+      this.setLeverage(btcSymbol, params.leverage).catch(() => {});
 
       const isIsolated = params.marginMode === 'isolated';
       const payload: Record<string, unknown> = {
@@ -402,7 +402,7 @@ export class PacificaClient {
     if (this.isDemo) return;
     const payload = { builder_code: builderCode, max_fee_rate: maxFeeRate };
     const timestamp = Date.now();
-    const expiryWindow = 5000;
+    const expiryWindow = 30000;
     const message = buildMessage('approve_builder_code', payload, timestamp, expiryWindow);
     const signature = await this.signMessage(message);
     const body = {
