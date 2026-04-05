@@ -11,6 +11,23 @@ function localKey(wallet: string) {
   return `broadside_builder_approved_${wallet}`;
 }
 
+const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+function getCachedApproval(wallet: string): boolean {
+  try {
+    const raw = localStorage.getItem(localKey(wallet));
+    if (!raw) return false;
+    const { approved, ts } = JSON.parse(raw);
+    return approved === true && Date.now() - ts < CACHE_TTL_MS;
+  } catch { return false; }
+}
+
+function setCachedApproval(wallet: string) {
+  try {
+    localStorage.setItem(localKey(wallet), JSON.stringify({ approved: true, ts: Date.now() }));
+  } catch { /* ignore */ }
+}
+
 export default function BuilderApprovalModal() {
   const { walletAddress, signFn } = usePacificaSigner();
 
@@ -23,13 +40,12 @@ export default function BuilderApprovalModal() {
   useEffect(() => {
     if (!walletAddress || !BUILDER_CODE) return;
 
-    // Skip if already cached locally
-    if (localStorage.getItem(localKey(walletAddress)) === 'true') return;
+    if (getCachedApproval(walletAddress)) return;
 
     const client = createPacificaClient(walletAddress, async () => 'demo-sig');
     client.checkBuilderApproval(BUILDER_CODE).then(approved => {
       if (approved) {
-        localStorage.setItem(localKey(walletAddress), 'true');
+        setCachedApproval(walletAddress);
       } else {
         setShow(true);
       }

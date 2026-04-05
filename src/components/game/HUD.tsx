@@ -37,6 +37,8 @@ function useRollingNumber(target: number, duration = 300) {
 
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+      startTimeRef.current = null;
     };
   }, [target, duration]);
 

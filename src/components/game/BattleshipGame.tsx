@@ -2739,7 +2739,9 @@ export default function BattleshipGame() {
       phaserInstance = game;
     };
 
-    initPhaser();
+    initPhaser().catch(err => {
+      console.error('[Broadside] Phaser failed to initialise:', err);
+    });
 
     return () => {
       mounted = false;

@@ -159,7 +159,11 @@ export function useAccountPositions() {
           const frames: PositionFrame[] = msg.data ?? [];
           // Apply all frames — creates positions for symbols not yet in store
           for (const frame of frames) {
-            applyFrame(frame);
+            try {
+              applyFrame(frame);
+            } catch (e) {
+              console.warn('[AccountPositions] frame apply error:', e);
+            }
           }
         } catch {
           // ignore parse errors

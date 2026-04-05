@@ -84,8 +84,6 @@ export default function ConnectWallet() {
 
     // Radar sweep gradient
     const sweepAngle = (radarAngle * Math.PI) / 180;
-    // Gradient placeholder (unused but kept for future use)
-    const gradient = undefined;
 
     // Manual sweep wedge
     ctx.save();
@@ -157,8 +155,6 @@ export default function ConnectWallet() {
     ctx.fillText('E', cx + r - 10, cy);
     ctx.fillText('W', cx - r + 10, cy);
 
-    // Use gradient variable to suppress TS warning
-    void gradient;
   }, [radarAngle]);
 
   // Skip loading screen after timeout — show game in demo mode

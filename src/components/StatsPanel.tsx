@@ -1,5 +1,6 @@
 'use client';
 
+import { useMemo } from 'react';
 import { useGameStore } from '@/store/gameStore';
 
 export default function StatsPanel() {
@@ -12,9 +13,11 @@ export default function StatsPanel() {
   const priceChangePct = firstPrice > 0 ? (priceChange / firstPrice) * 100 : 0;
 
   // Mini chart data
-  const chartMin = Math.min(...priceHistory);
-  const chartMax = Math.max(...priceHistory);
-  const chartRange = chartMax - chartMin || 1;
+  const { chartMin, chartMax, chartRange } = useMemo(() => {
+    const min = Math.min(...priceHistory);
+    const max = Math.max(...priceHistory);
+    return { chartMin: min, chartMax: max, chartRange: max - min || 1 };
+  }, [priceHistory]);
 
   const getChartY = (price: number, h: number) =>
     h - ((price - chartMin) / chartRange) * h;

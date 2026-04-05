@@ -21,6 +21,7 @@ export class PriceWebSocket {
   private onAllMarketData?: (entries: MarketEntry[]) => void;
   private ws: WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectAttempts = 0;
   private isConnected = false;
   private simulationInterval: ReturnType<typeof setInterval> | null = null;
   private lastPrice = 100000;
@@ -58,6 +59,7 @@ export class PriceWebSocket {
       this.ws.onopen = () => {
         clearTimeout(timeout);
         this.isConnected = true;
+        this.reconnectAttempts = 0;
         this.source = 'pacifica';
         this.ws?.send(JSON.stringify({
           method: 'subscribe',
@@ -102,7 +104,7 @@ export class PriceWebSocket {
       const entry = (data.data as Record<string, string>[]).find(x => x.symbol === baseSymbol);
       if (entry) {
         const price = parseFloat(entry.mark || entry.oracle || entry.mid);
-        if (!isNaN(price) && price > 0) {
+        if (!isNaN(price) && price > 0 && price < 1e12) {
           this.lastPrice = price;
           this.onPrice(price);
         }
@@ -124,7 +126,7 @@ export class PriceWebSocket {
             openInterest: parseFloat(x.open_interest) || 0,
             volume24h: parseFloat(x.volume_24h) || 0,
           }))
-          .filter(e => !isNaN(e.price) && e.price > 0);
+          .filter(e => !isNaN(e.price) && e.price > 0 && e.price < 1e12);
         this.onAllMarketData(allEntries);
       }
       return;
@@ -239,12 +241,14 @@ export class PriceWebSocket {
 
   private scheduleReconnect(): void {
     if (this.reconnectTimer) return;
+    const delay = Math.min(30000, 1000 * Math.pow(2, this.reconnectAttempts));
+    this.reconnectAttempts += 1;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       if (!this.isConnected) {
         this.connect();
       }
-    }, 5000);
+    }, delay);
   }
 
   disconnect(): void {

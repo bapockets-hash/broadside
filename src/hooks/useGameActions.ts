@@ -4,6 +4,10 @@ import { createPacificaClient } from '@/lib/pacifica';
 import { soundEngine } from '@/lib/soundEngine';
 import { usePacificaSigner } from '@/hooks/usePacificaSigner';
 
+const ORDER_ANIMATION_DELAY_MS = 600;
+const LIQ_SYNC_INITIAL_MS = 2500;
+const LIQ_SYNC_RETRY_MS = 8000;
+
 function genPositionId(): string {
   return 'pos-' + Math.random().toString(36).slice(2, 10);
 }
@@ -104,7 +108,7 @@ export function useFireCannons() {
     const positionId = genPositionId();
 
     try {
-      await new Promise(resolve => setTimeout(resolve, 600));
+      await new Promise(resolve => setTimeout(resolve, ORDER_ANIMATION_DELAY_MS));
       setGamePhase('firing');
 
       // Play cannon fire sound
@@ -149,8 +153,8 @@ export function useFireCannons() {
       setGamePhase('active');
 
       // Fetch authoritative liq price from Pacifica (delayed to let order settle)
-      setTimeout(() => syncPosition(walletAddress ?? 'demo-wallet', signFn, selectedSymbol, positionId), 2500);
-      setTimeout(() => syncPosition(walletAddress ?? 'demo-wallet', signFn, selectedSymbol, positionId), 8000);
+      setTimeout(() => syncPosition(walletAddress ?? 'demo-wallet', signFn, selectedSymbol, positionId), LIQ_SYNC_INITIAL_MS);
+      setTimeout(() => syncPosition(walletAddress ?? 'demo-wallet', signFn, selectedSymbol, positionId), LIQ_SYNC_RETRY_MS);
 
       addCombatLog(
         `${selectedSide === 'short' ? '⚔ CANNONS FIRED!' : '🛡 SHIELDS RAISED!'} ${leverage}x $${tradeSize}`,
@@ -353,6 +357,7 @@ export function usePositionMonitor() {
   useEffect(() => {
     const interval = setInterval(async () => {
       const state = useGameStore.getState();
+      const { upsertPosition: upsert, setGamePhase: setPhase, removePosition: removePosById, addCombatLog: log, updateMissionProgress: updateMission } = state;
       const allPositions = state.positions;
       const phase = gamePhasRef.current;
       if (!allPositions.length || phase !== 'active') return;
@@ -360,13 +365,11 @@ export function usePositionMonitor() {
       // Track wave count (each interval tick with position = 1 wave)
       waveCountRef.current += 1;
       if (waveCountRef.current % 2 === 0) {
-        // Update every ~6s
-        updateMissionProgress('survive_waves', 1);
+        updateMission('survive_waves', 1);
       }
 
       for (const pos of allPositions) {
         const price = state.allMarketPrices[pos.symbol]?.price ?? state.currentPrice;
-        // size is always token amount
         const tokenSize = pos.size;
         const rawPnl = pos.side === 'long'
           ? (price - pos.entryPrice) * tokenSize
@@ -379,29 +382,31 @@ export function usePositionMonitor() {
           ? Math.max(0, Math.min(100, (distToLiq / marginRange) * 100))
           : 100;
 
-        upsertPosition({ ...pos, unrealizedPnl, marginHealth });
+        upsert({ ...pos, unrealizedPnl, marginHealth });
 
         if (waveCountRef.current % 10 === 0 && walletAddress) {
           syncPosition(walletAddress, signFn, pos.symbol, pos.id);
         }
 
         if (marginHealth < 2) {
-          setGamePhase('sunk');
-          addCombatLog('💥 SHIP SUNK! POSITION LIQUIDATED!', 'defeat');
+          setPhase('sunk');
+          log('💥 SHIP SUNK! POSITION LIQUIDATED!', 'defeat');
           soundEngine.playExplosion();
-          setTimeout(() => { removePosition(pos.id); }, 5000);
+          setTimeout(() => { removePosById(pos.id); }, 5000);
           continue;
         }
 
         if (marginHealth < 20) {
-          addCombatLog(`⚠ CRITICAL! Hull at ${Math.round(marginHealth)}%`, 'damage');
+          log(`⚠ CRITICAL! Hull at ${Math.round(marginHealth)}%`, 'damage');
         } else if (marginHealth < 40) {
-          addCombatLog(`TORPEDO HIT! Hull at ${Math.round(marginHealth)}%`, 'damage');
+          log(`TORPEDO HIT! Hull at ${Math.round(marginHealth)}%`, 'damage');
         }
       }
 
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [upsertPosition, setGamePhase, removePosition, addCombatLog, updateMissionProgress, walletAddress, signFn]);
+  // Zustand action refs are stable — only re-create interval if wallet changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [walletAddress, signFn]);
 }

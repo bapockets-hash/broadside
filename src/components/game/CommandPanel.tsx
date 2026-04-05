@@ -50,15 +50,6 @@ export default function CommandPanel({ onFire, onRetreat }: CommandPanelProps) {
     return marketInfoMap[symbol]?.maxLeverage ?? 10;
   }
 
-  function getLeveragePresets(maxLev: number): number[] {
-    if (maxLev >= 50) return [1, 5, 10, 25, 50];
-    if (maxLev >= 20) return [1, 3, 5, 10, 20];
-    if (maxLev >= 15) return [1, 3, 5, 10, 15];
-    if (maxLev >= 10) return [1, 2, 3, 5, 10];
-    if (maxLev >= 5)  return [1, 2, 3, 5];
-    return [1, 2, 3];
-  }
-
   // Category membership — anything Pacifica sends that isn't here falls into OTHER
   const CRYPTO  = new Set(['BTC','ETH','SOL','BNB','AVAX','XRP','DOGE','ADA','LINK','SUI','TON','NEAR','LTC','BCH','ICP','TAO','STRK','ZRO','WLD','ZK','ENA','ZEC','XMR','PAXG','VIRTUAL','LINEA','URNM','HYPE']);
   const MEME    = new Set(['kPEPE','kBONK','FARTCOIN','TRUMP','WIF','PENGU','WHITEWHALE','PIPPIN','MEGA','PUMP','MON','ASTER','WLFI','PROVE','LIT','XPL','2Z','CRCL','ZORA']);
