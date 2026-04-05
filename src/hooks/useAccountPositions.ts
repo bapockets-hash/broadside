@@ -29,7 +29,15 @@ function applyFrame(frame: PositionFrame) {
   const margin = parseFloat(frame.m || '0');
   const side = frame.d === 'bid' ? 'long' : 'short';
 
-  if (!tokenAmount || !entryPrice) return false;
+  // Zero amount = position closed externally — remove from store
+  if (!tokenAmount) {
+    if (existingPos) {
+      store.removePosition(existingPos.id);
+    }
+    return false;
+  }
+
+  if (!entryPrice) return false;
 
   let liquidationPrice = existingPos?.liquidationPrice ?? 0;
   if (frame.l != null && frame.l !== '') {
@@ -128,6 +136,14 @@ export function useAccountPositions() {
             });
           }
         }
+        // Remove positions that are no longer open on Pacifica
+        const openSymbols = new Set(all.map(p => p.symbol));
+        for (const storePos of store.positions) {
+          if (!openSymbols.has(storePos.symbol)) {
+            store.removePosition(storePos.id);
+          }
+        }
+
         if (all.length > 0 && store.gamePhase === 'idle') {
           store.setGamePhase('active');
         }
