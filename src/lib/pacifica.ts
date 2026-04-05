@@ -315,7 +315,8 @@ export class PacificaClient {
       const side: 'long' | 'short' = data.side === 'long' || data.side === 'bid' ? 'long' : 'short';
       const entryPrice = parseFloat(String(data.entry_price || '0'));
       const size = parseFloat(String(data.amount || '0'));
-      const margin = parseFloat(String(data.margin || '0')) || size;
+      // margin is USD isolated margin; 0 means cross-margin (don't use as fallback)
+      const margin = parseFloat(String(data.margin || '0'));
       const liqPrice = parseFloat(String(data.liquidation_price || '0'));
       const openedAt = typeof data.created_at === 'number' ? data.created_at : Date.now();
 
@@ -325,11 +326,11 @@ export class PacificaClient {
         size,
         entryPrice,
         markPrice: entryPrice,
-        leverage: margin > 0 ? size / margin : 1,
+        leverage: 1,        // not derivable here; store keeps user's selected leverage
         marginHealth: 100,
         unrealizedPnl: 0,
         liquidationPrice: liqPrice,
-        margin,
+        margin,             // 0 for cross-margin — syncPosition handles this
         openedAt,
       };
     } catch (err) {

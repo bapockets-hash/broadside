@@ -16,13 +16,27 @@ async function syncPosition(
     if (!pos) return;
     const store = useGameStore.getState();
     if (!store.position) return;
+    const existing = store.position;
+    const leverage = existing.leverage;
+    const entryPrice = existing.entryPrice;
+    const side = existing.side;
+
+    // For cross-margin, Pacifica returns margin=0 — keep the user's trade size as margin
+    const margin = pos.margin > 0 ? pos.margin : existing.margin;
+
+    // Use API liq price if valid; otherwise estimate from leverage
+    const liqPrice = pos.liquidationPrice > 0
+      ? pos.liquidationPrice
+      : side === 'long'
+        ? entryPrice * (1 - 1 / leverage + 0.005)
+        : entryPrice * (1 + 1 / leverage - 0.005);
+
     store.setPosition({
-      ...store.position,
-      liquidationPrice: pos.liquidationPrice > 0 ? pos.liquidationPrice : store.position.liquidationPrice,
+      ...existing,
+      liquidationPrice: liqPrice,
       marginHealth: pos.marginHealth,
-      margin: pos.margin,
-      // Use Pacifica's created_at only if we don't already have an openedAt
-      openedAt: store.position.openedAt || pos.openedAt,
+      margin,
+      openedAt: existing.openedAt || pos.openedAt,
     });
   } catch {
     // silently ignore — stale estimate stays
