@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
 
 export interface MarketEntry {
   symbol: string;
@@ -445,11 +445,11 @@ export const useGameStore = create<GameState>()(persist((set, get) => ({
     }),
 }), {
   name: 'broadside-game-state',
-  storage: {
+  storage: createJSONStorage(() => ({
     getItem: (key) => { try { return localStorage.getItem(key); } catch { return null; } },
     setItem: (key, value) => { try { localStorage.setItem(key, value); } catch { /* quota exceeded or private browsing */ } },
     removeItem: (key) => { try { localStorage.removeItem(key); } catch { /* ignore */ } },
-  },
+  })),
   partialize: (state) => ({
     positions: state.positions,
     gamePhase: state.gamePhase === 'active' ? 'active' : 'idle',

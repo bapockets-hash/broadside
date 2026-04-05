@@ -94,22 +94,23 @@ export function useHistoricalPrices() {
         let timestamps: number[];
         let volumes: number[] | undefined;
 
-        try {
-          const r = await fetchPacificaCandles(timeframe, 200, selectedSymbol);
-          prices = r.prices;
-          timestamps = r.timestamps;
-          volumes = r.volumes;
-          // If Pacifica returned all-zero volumes (field absent), try Binance as backup
-          const hasVol = volumes.some(v => v > 0);
-          if (!hasVol && binancePair) {
-            try {
-              const vr = await fetchBinanceCandles(timeframe, 200, binancePair);
-              volumes = vr.volumes;
-            } catch { /* keep zero volumes, terrain will be flat */ }
+        // Use Binance as primary for symbols it supports — avoids hitting Pacifica rate limits
+        if (binancePair) {
+          try {
+            const r = await fetchBinanceCandles(timeframe, 200, binancePair);
+            prices = r.prices;
+            timestamps = r.timestamps;
+            volumes = r.volumes;
+          } catch {
+            // Binance failed — fall back to Pacifica
+            const r = await fetchPacificaCandles(timeframe, 200, selectedSymbol);
+            prices = r.prices;
+            timestamps = r.timestamps;
+            volumes = r.volumes;
           }
-        } catch {
-          if (!binancePair) return; // no data source for this symbol
-          const r = await fetchBinanceCandles(timeframe, 200, binancePair);
+        } else {
+          // Pacifica-only symbol (stocks, forex, etc.)
+          const r = await fetchPacificaCandles(timeframe, 200, selectedSymbol);
           prices = r.prices;
           timestamps = r.timestamps;
           volumes = r.volumes;

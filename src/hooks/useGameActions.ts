@@ -6,7 +6,6 @@ import { usePacificaSigner } from '@/hooks/usePacificaSigner';
 
 const ORDER_ANIMATION_DELAY_MS = 600;
 const LIQ_SYNC_INITIAL_MS = 2500;
-const LIQ_SYNC_RETRY_MS = 8000;
 
 function genPositionId(): string {
   return 'pos-' + Math.random().toString(36).slice(2, 10);
@@ -43,36 +42,6 @@ async function syncPosition(
   }
 }
 
-/** Single batch sync for all open positions — one API call regardless of position count */
-async function syncAllPositions(
-  walletAddress: string,
-  signFn: (msg: string) => Promise<string>,
-) {
-  try {
-    const client = createPacificaClient(walletAddress, signFn);
-    const all = await client.getAllPositions();
-    const store = useGameStore.getState();
-    const openSymbols = new Set(all.map(p => p.symbol));
-
-    for (const pos of all) {
-      const existing = store.positions.find(p => p.symbol === pos.symbol);
-      if (!existing) continue;
-      const liqPrice = pos.liquidationPrice > 0 ? pos.liquidationPrice : existing.liquidationPrice;
-      const size = pos.size > 0 ? pos.size : existing.size;
-      const margin = pos.margin > 0 ? pos.margin : existing.margin;
-      store.upsertPosition({ ...existing, size, liquidationPrice: liqPrice, margin });
-    }
-
-    // Remove any positions no longer open on Pacifica
-    for (const storePos of store.positions) {
-      if (!openSymbols.has(storePos.symbol)) {
-        store.removePosition(storePos.id);
-      }
-    }
-  } catch {
-    // silently ignore
-  }
-}
 
 function parseWalletError(err: unknown): string {
   const raw = err instanceof Error ? err.message
@@ -426,11 +395,6 @@ export function usePositionMonitor() {
           : 100;
 
         upsert({ ...pos, unrealizedPnl, marginHealth });
-
-        // Batch sync once per 20 ticks (60s) — one API call for all positions
-        if (waveCountRef.current % 20 === 0 && walletAddress && pos === allPositions[0]) {
-          syncAllPositions(walletAddress, signFn);
-        }
 
         if (marginHealth < 2) {
           setPhase('sunk');
