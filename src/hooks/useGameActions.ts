@@ -4,37 +4,38 @@ import { createPacificaClient } from '@/lib/pacifica';
 import { soundEngine } from '@/lib/soundEngine';
 import { usePacificaSigner } from '@/hooks/usePacificaSigner';
 
+function genPositionId(): string {
+  return 'pos-' + Math.random().toString(36).slice(2, 10);
+}
+
 /** Fetch authoritative position data from Pacifica and sync liq price + margin */
 async function syncPosition(
   walletAddress: string,
   signFn: (msg: string) => Promise<string>,
-  symbol: string
+  symbol: string,
+  positionId: string,
 ) {
   try {
     const client = createPacificaClient(walletAddress, signFn);
     const pos = await client.getPosition(symbol + '-PERP');
     if (!pos) return;
     const store = useGameStore.getState();
-    if (!store.position) return;
-    const existing = store.position;
-    const leverage = existing.leverage;
-    const entryPrice = existing.entryPrice;
-    const side = existing.side;
+    const existing = store.positions.find(p => p.id === positionId);
+    if (!existing) return;
 
     // For cross-margin, Pacifica returns margin=0 — keep the user's trade size as margin
     const margin = pos.margin > 0 ? pos.margin : existing.margin;
 
-    // Use API liq price if valid; otherwise estimate from leverage
-    const liqPrice = pos.liquidationPrice > 0
-      ? pos.liquidationPrice
-      : side === 'long'
-        ? entryPrice * (1 - 1 / leverage + 0.005)
-        : entryPrice * (1 + 1 / leverage - 0.005);
+    // Use API liq price if valid; otherwise keep existing
+    const liqPrice = pos.liquidationPrice > 0 ? pos.liquidationPrice : existing.liquidationPrice;
 
-    store.setPosition({
+    // Use authoritative token amount from API if available
+    const size = pos.size > 0 ? pos.size : existing.size;
+
+    store.upsertPosition({
       ...existing,
+      size,
       liquidationPrice: liqPrice,
-      marginHealth: pos.marginHealth,
       margin,
       openedAt: existing.openedAt || pos.openedAt,
     });
@@ -63,15 +64,18 @@ export function useFireCannons() {
     selectedSide,
     leverage,
     tradeSize,
+    marginMode,
     currentPrice,
     gamePhase,
     selectedSymbol,
+    positions,
     setLoading,
     setGamePhase,
-    setPosition,
+    upsertPosition,
     addCombatLog,
     addXP,
     updateMissionProgress,
+    recordSymbolLeverage,
   } = useGameStore();
 
   const fire = useCallback(async () => {
@@ -80,8 +84,13 @@ export function useFireCannons() {
       return;
     }
 
-    if (gamePhase !== 'idle') {
+    if (gamePhase === 'aiming' || gamePhase === 'firing') {
       addCombatLog('CANNOT FIRE: Position already active', 'info');
+      return;
+    }
+
+    if (positions.some(p => p.symbol === selectedSymbol)) {
+      addCombatLog('POSITION ALREADY OPEN FOR ' + selectedSymbol, 'info');
       return;
     }
 
@@ -92,12 +101,17 @@ export function useFireCannons() {
     setGamePhase('aiming');
     addCombatLog(`ACQUIRING TARGET: ${selectedSide === 'short' ? 'ATTACK' : 'DEFEND'} @ ${leverage}x`, 'info');
 
+    const positionId = genPositionId();
+
     try {
       await new Promise(resolve => setTimeout(resolve, 600));
       setGamePhase('firing');
 
       // Play cannon fire sound
       soundEngine.playCannonFire();
+
+      // Persist leverage for this symbol so external positions can be reconciled
+      recordSymbolLeverage(selectedSymbol, leverage);
 
       const client = createPacificaClient(walletAddress ?? 'demo-wallet', signFn);
 
@@ -108,16 +122,21 @@ export function useFireCannons() {
         leverage,
         orderType: 'market',
         currentPrice,
+        marginMode,
       });
 
       const entryPrice = order.entryPrice || currentPrice;
       const margin = order.margin ?? tradeSize;
+      // size is always token amount: notional / price
+      const tokenSize = parseFloat(((tradeSize * leverage) / entryPrice).toFixed(8));
 
       // Set initial position — liquidationPrice starts at 0 until syncPosition
       // fetches the authoritative value from Pacifica (~2.5s after order settles)
-      setPosition({
+      upsertPosition({
+        id: positionId,
+        symbol: selectedSymbol,
         side: selectedSide,
-        size: tradeSize,
+        size: tokenSize,
         entryPrice,
         leverage,
         margin,
@@ -130,8 +149,8 @@ export function useFireCannons() {
       setGamePhase('active');
 
       // Fetch authoritative liq price from Pacifica (delayed to let order settle)
-      setTimeout(() => syncPosition(walletAddress ?? 'demo-wallet', signFn, selectedSymbol), 2500);
-      setTimeout(() => syncPosition(walletAddress ?? 'demo-wallet', signFn, selectedSymbol), 8000);
+      setTimeout(() => syncPosition(walletAddress ?? 'demo-wallet', signFn, selectedSymbol, positionId), 2500);
+      setTimeout(() => syncPosition(walletAddress ?? 'demo-wallet', signFn, selectedSymbol, positionId), 8000);
 
       addCombatLog(
         `${selectedSide === 'short' ? '⚔ CANNONS FIRED!' : '🛡 SHIELDS RAISED!'} ${leverage}x $${tradeSize}`,
@@ -157,30 +176,31 @@ export function useFireCannons() {
     selectedSide,
     leverage,
     tradeSize,
+    marginMode,
     currentPrice,
     gamePhase,
     selectedSymbol,
+    positions,
     walletAddress,
     signFn,
     setLoading,
     setGamePhase,
-    setPosition,
+    upsertPosition,
     addCombatLog,
     addXP,
     updateMissionProgress,
+    recordSymbolLeverage,
   ]);
 
   return fire;
 }
 
-export function useRetreat() {
+export function useClosePosition(position: import('@/store/gameStore').Position | null) {
   const { walletAddress, signFn } = usePacificaSigner();
   const {
-    position,
-    selectedSymbol,
     setLoading,
     setGamePhase,
-    clearPosition,
+    removePosition,
     addCombatLog,
     addXP,
     updateMissionProgress,
@@ -200,10 +220,11 @@ export function useRetreat() {
 
     try {
       const client = createPacificaClient(walletAddress ?? 'demo-wallet', signFn);
+      const currentPrice = useGameStore.getState().allMarketPrices[position.symbol]?.price ?? useGameStore.getState().currentPrice;
       const result = await client.closePosition(
-        selectedSymbol + '-PERP',
+        position.symbol + '-PERP',
         { side: position.side, size: position.size, entryPrice: position.entryPrice },
-        useGameStore.getState().currentPrice,
+        currentPrice,
       );
 
       const pnl = position.unrealizedPnl;
@@ -224,7 +245,9 @@ export function useRetreat() {
       // Session stats
       updateSessionStats(pnl, pnl > 0);
 
-      clearPosition();
+      removePosition(position.id);
+      const remaining = useGameStore.getState().positions;
+      setGamePhase(remaining.length > 0 ? 'active' : 'idle');
 
       if (result.success || pnl !== undefined) {
         addCombatLog(
@@ -234,26 +257,25 @@ export function useRetreat() {
       }
 
       await new Promise(resolve => setTimeout(resolve, 300));
-      setGamePhase('idle');
 
     } catch (err) {
       console.error('[Broadside] RETREAT FAILED raw error:', err);
       const errorMsg = parseWalletError(err);
       addCombatLog(`RETREAT FAILED: ${errorMsg}`, 'info');
       soundEngine.playDefeat();
-      clearPosition();
-      setGamePhase('idle');
+      removePosition(position.id);
+      const remaining = useGameStore.getState().positions;
+      setGamePhase(remaining.length > 0 ? 'active' : 'idle');
     } finally {
       setLoading(false);
     }
   }, [
     position,
-    selectedSymbol,
     walletAddress,
     signFn,
     setLoading,
     setGamePhase,
-    clearPosition,
+    removePosition,
     addCombatLog,
     addXP,
     updateMissionProgress,
@@ -263,31 +285,32 @@ export function useRetreat() {
   return retreat;
 }
 
+export function useRetreat() {
+  const selectedSymbol = useGameStore(s => s.selectedSymbol);
+  const closePosition = useClosePosition(
+    useGameStore(s => s.positions.find(p => p.symbol === selectedSymbol) ?? null)
+  );
+  return closePosition;
+}
+
 export function usePositionMonitor() {
   const {
-    position,
     currentPrice,
-    setPosition,
+    upsertPosition,
     setGamePhase,
-    clearPosition,
+    removePosition,
     addCombatLog,
     gamePhase,
     incrementCombo,
     updateMissionProgress,
-    selectedSymbol,
   } = useGameStore();
   const { walletAddress, signFn } = usePacificaSigner();
 
-  const positionRef = useRef(position);
   const gamePhasRef = useRef(gamePhase);
   const currentPriceRef = useRef(currentPrice);
   const consecutiveFavorableTicksRef = useRef(0);
   const waveCountRef = useRef(0);
   const lastPriceRef = useRef(currentPrice);
-
-  useEffect(() => {
-    positionRef.current = position;
-  }, [position]);
 
   useEffect(() => {
     gamePhasRef.current = gamePhase;
@@ -299,7 +322,8 @@ export function usePositionMonitor() {
 
   // Track consecutive favorable ticks for combo
   useEffect(() => {
-    const pos = positionRef.current;
+    const selectedSymbol = useGameStore.getState().selectedSymbol;
+    const pos = useGameStore.getState().positions.find(p => p.symbol === selectedSymbol) ?? null;
     const phase = gamePhasRef.current;
     if (!pos || phase !== 'active') {
       consecutiveFavorableTicksRef.current = 0;
@@ -328,12 +352,10 @@ export function usePositionMonitor() {
 
   useEffect(() => {
     const interval = setInterval(async () => {
-      // Always read latest position directly from store to avoid stale ref overwrites
-      const pos = useGameStore.getState().position;
+      const state = useGameStore.getState();
+      const allPositions = state.positions;
       const phase = gamePhasRef.current;
-      const price = currentPriceRef.current;
-
-      if (!pos || phase !== 'active') return;
+      if (!allPositions.length || phase !== 'active') return;
 
       // Track wave count (each interval tick with position = 1 wave)
       waveCountRef.current += 1;
@@ -342,45 +364,44 @@ export function usePositionMonitor() {
         updateMissionProgress('survive_waves', 1);
       }
 
-      const tokenSize = (pos.margin * pos.leverage) / pos.entryPrice;
-      const rawPnl = pos.side === 'long'
-        ? (price - pos.entryPrice) * tokenSize
-        : (pos.entryPrice - price) * tokenSize;
-      const unrealizedPnl = Math.round(rawPnl * 100) / 100;
+      for (const pos of allPositions) {
+        const price = state.allMarketPrices[pos.symbol]?.price ?? state.currentPrice;
+        // size is always token amount
+        const tokenSize = pos.size;
+        const rawPnl = pos.side === 'long'
+          ? (price - pos.entryPrice) * tokenSize
+          : (pos.entryPrice - price) * tokenSize;
+        const unrealizedPnl = Math.round(rawPnl * 100) / 100;
+        const liqPrice = pos.liquidationPrice;
+        const distToLiq = Math.abs(price - liqPrice);
+        const marginRange = Math.abs(pos.entryPrice - liqPrice);
+        const marginHealth = liqPrice > 0 && marginRange > 0
+          ? Math.max(0, Math.min(100, (distToLiq / marginRange) * 100))
+          : 100;
 
-      // Distance from current price to liquidation as % of the margin range
-      const liqPrice = pos.liquidationPrice;
-      const distToLiq = Math.abs(price - liqPrice);
-      const marginRange = Math.abs(pos.entryPrice - liqPrice);
-      const marginHealth = liqPrice > 0 && marginRange > 0
-        ? Math.max(0, Math.min(100, (distToLiq / marginRange) * 100))
-        : 100;
+        upsertPosition({ ...pos, unrealizedPnl, marginHealth });
 
-      setPosition({ ...pos, unrealizedPnl, marginHealth });
+        if (waveCountRef.current % 10 === 0 && walletAddress) {
+          syncPosition(walletAddress, signFn, pos.symbol, pos.id);
+        }
 
-      // Every ~30s sync authoritative liq price from Pacifica
-      if (waveCountRef.current % 10 === 0 && walletAddress) {
-        syncPosition(walletAddress, signFn, selectedSymbol);
-      }
+        if (marginHealth < 2) {
+          setGamePhase('sunk');
+          addCombatLog('💥 SHIP SUNK! POSITION LIQUIDATED!', 'defeat');
+          soundEngine.playExplosion();
+          setTimeout(() => { removePosition(pos.id); }, 5000);
+          continue;
+        }
 
-      // Liquidation check
-      if (marginHealth < 2) {
-        setGamePhase('sunk');
-        addCombatLog('💥 SHIP SUNK! POSITION LIQUIDATED!', 'defeat');
-        soundEngine.playExplosion();
-        setTimeout(() => { clearPosition(); }, 5000);
-        return;
-      }
-
-      // Low health warnings
-      if (marginHealth < 20) {
-        addCombatLog(`⚠ CRITICAL! Hull at ${Math.round(marginHealth)}%`, 'damage');
-      } else if (marginHealth < 40) {
-        addCombatLog(`TORPEDO HIT! Hull at ${Math.round(marginHealth)}%`, 'damage');
+        if (marginHealth < 20) {
+          addCombatLog(`⚠ CRITICAL! Hull at ${Math.round(marginHealth)}%`, 'damage');
+        } else if (marginHealth < 40) {
+          addCombatLog(`TORPEDO HIT! Hull at ${Math.round(marginHealth)}%`, 'damage');
+        }
       }
 
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [setPosition, setGamePhase, clearPosition, addCombatLog, updateMissionProgress, walletAddress, signFn, selectedSymbol]);
+  }, [upsertPosition, setGamePhase, removePosition, addCombatLog, updateMissionProgress, walletAddress, signFn]);
 }

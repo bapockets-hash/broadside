@@ -1,6 +1,8 @@
 'use client';
 
 import { useGameStore } from '@/store/gameStore';
+import { useClosePosition } from '@/hooks/useGameActions';
+import type { Position } from '@/store/gameStore';
 
 interface Admiral {
   rank: number;
@@ -13,10 +15,29 @@ interface Admiral {
 const mockAdmirals: Admiral[] = [
   { rank: 1, address: '0x7f3a...9b2c', shipsSunk: 47, fleetValue: 128450 },
   { rank: 2, address: '0x2d8e...4f1a', shipsSunk: 38, fleetValue: 94320 },
-  { rank: 3, address: '0xac91...7e33', shipsSunk: 31, fleetValue: 67800 },
-  { rank: 4, address: '0x5b4d...2c8f', shipsSunk: 24, fleetValue: 45600 },
-  { rank: 5, address: '0xe3f2...1a9d', shipsSunk: 19, fleetValue: 32100, isCurrentPlayer: true },
+  { rank: 3, address: '0xac91...7e33', shipsSunk: 31, fleetValue: 67800, isCurrentPlayer: true },
 ];
+
+function PositionCloseButton({ pos, lightMode }: { pos: Position; lightMode: boolean }) {
+  const close = useClosePosition(pos);
+  return (
+    <button
+      onClick={close}
+      style={{
+        background: 'none',
+        border: `1px solid rgba(255,60,60,0.3)`,
+        color: '#cc4444',
+        fontSize: '9px',
+        padding: '1px 5px',
+        borderRadius: '3px',
+        cursor: 'pointer',
+        fontFamily: 'monospace',
+      }}
+    >
+      ✕
+    </button>
+  );
+}
 
 const rankStylesDark = ['#ffd700', '#c0c0c0', '#cd7f32', '#aaa', '#888'];
 const rankStylesLight = ['#8a6200', '#607080', '#7a4a10', '#556677', '#445566'];
@@ -30,6 +51,9 @@ function truncateAddress(address: string): string {
 export default function Leaderboard() {
   const admirals = mockAdmirals;
   const lightMode = useGameStore(s => s.lightMode);
+  const positions = useGameStore(s => s.positions);
+  const selectedSymbol = useGameStore(s => s.selectedSymbol);
+  const setSelectedSymbol = useGameStore(s => s.setSelectedSymbol);
   const rankStyles = lightMode ? rankStylesLight : rankStylesDark;
 
   return (
@@ -44,9 +68,75 @@ export default function Leaderboard() {
         fontFamily: 'var(--font-share-tech-mono, monospace)',
       }}
     >
-      {/* Header */}
+      {/* Open Positions */}
       <div
-        className="px-3 py-3 text-center"
+        className="flex-1 flex flex-col px-3 py-2 overflow-y-auto"
+        style={{ borderBottom: lightMode ? '1px solid rgba(0,100,200,0.2)' : '1px solid rgba(0,212,255,0.2)' }}
+      >
+        <div className="text-xs font-bold tracking-widest mb-1.5" style={{ color: lightMode ? '#0055aa' : '#00d4ff', fontFamily: 'var(--font-orbitron, monospace)' }}>
+          POSITIONS
+        </div>
+        {positions.length === 0 ? (
+          <div style={{ fontSize: '9px', color: lightMode ? '#778899' : '#445', letterSpacing: '0.05em' }}>
+            NO OPEN POSITIONS
+          </div>
+        ) : (
+          <div className="space-y-1">
+            {positions.map(pos => {
+              const pnlColor = pos.unrealizedPnl >= 0 ? (lightMode ? '#007744' : '#00ff88') : '#cc2222';
+              const isSelected = pos.symbol === selectedSymbol;
+              return (
+                <div
+                  key={pos.id}
+                  onClick={() => setSelectedSymbol(pos.symbol)}
+                  className="rounded px-2 py-1"
+                  style={{
+                    background: isSelected
+                      ? (lightMode ? 'rgba(0,100,200,0.12)' : 'rgba(0,212,255,0.1)')
+                      : (lightMode ? 'rgba(0,0,0,0.04)' : 'rgba(0,0,0,0.3)'),
+                    border: `1px solid ${isSelected
+                      ? (lightMode ? 'rgba(0,100,200,0.5)' : 'rgba(0,212,255,0.4)')
+                      : (lightMode ? 'rgba(0,100,200,0.2)' : 'rgba(0,212,255,0.12)')}`,
+                    cursor: 'pointer',
+                    transition: 'background 0.15s, border-color 0.15s',
+                  }}
+                  onMouseEnter={e => {
+                    if (!isSelected) (e.currentTarget as HTMLDivElement).style.background = lightMode ? 'rgba(0,100,200,0.07)' : 'rgba(0,212,255,0.07)';
+                  }}
+                  onMouseLeave={e => {
+                    if (!isSelected) (e.currentTarget as HTMLDivElement).style.background = lightMode ? 'rgba(0,0,0,0.04)' : 'rgba(0,0,0,0.3)';
+                  }}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1">
+                      <span style={{ color: pos.side === 'long' ? (lightMode ? '#007744' : '#00ff88') : '#cc2222', fontSize: '10px', fontWeight: 'bold' }}>
+                        {pos.side === 'long' ? '▲' : '▼'} {pos.symbol}
+                      </span>
+                      <span style={{ color: lightMode ? '#778899' : '#556', fontSize: '9px' }}>{pos.leverage}x</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span style={{ color: pnlColor, fontSize: '9px', fontWeight: 'bold' }}>
+                        {pos.unrealizedPnl >= 0 ? '+' : ''}${pos.unrealizedPnl.toFixed(2)}
+                      </span>
+                      <PositionCloseButton pos={pos} lightMode={lightMode} />
+                    </div>
+                  </div>
+                  <div className="flex justify-between mt-0.5">
+                    <span style={{ color: lightMode ? '#778899' : '#445', fontSize: '8px' }}>
+                      @{pos.entryPrice < 1 ? pos.entryPrice.toFixed(4) : pos.entryPrice < 100 ? pos.entryPrice.toFixed(2) : pos.entryPrice.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                    </span>
+                    <span style={{ color: lightMode ? '#778899' : '#445', fontSize: '8px' }}>{pos.size} {pos.symbol}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Rankings header */}
+      <div
+        className="px-3 py-2 text-center"
         style={{ borderBottom: lightMode ? '1px solid rgba(0,100,200,0.2)' : '1px solid rgba(0,212,255,0.2)' }}
       >
         <div
@@ -60,22 +150,8 @@ export default function Leaderboard() {
         </div>
       </div>
 
-      {/* Decorative compass */}
-      <div className="flex justify-center py-2">
-        <div
-          className="w-8 h-8 flex items-center justify-center rounded-full text-xs"
-          style={{
-            border: lightMode ? '1px solid rgba(0,100,200,0.3)' : '1px solid rgba(0,212,255,0.3)',
-            color: lightMode ? '#0066cc' : '#00d4ff',
-            background: lightMode ? 'rgba(0,100,200,0.08)' : 'rgba(0,212,255,0.05)',
-          }}
-        >
-          ⊕
-        </div>
-      </div>
-
-      {/* Admirals list */}
-      <div className="flex-1 overflow-y-auto px-2 space-y-1.5 pb-3">
+      {/* Admirals list — top 3 */}
+      <div className="px-2 space-y-1.5 py-2">
         {admirals.map((admiral) => (
           <div
             key={admiral.rank}

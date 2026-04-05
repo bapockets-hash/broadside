@@ -52,6 +52,7 @@ interface MissionToastState {
   slidingOut: boolean;
 }
 
+
 export default function AdmiralPanel() {
   const { xp, rank, missions, missionProgress, sessionStats, combatLog, lightMode } = useGameStore();
   const { logout, user } = usePrivy();
@@ -275,7 +276,6 @@ export default function AdmiralPanel() {
                   {mission.description}
                 </div>
 
-                {/* Progress bar */}
                 <div className="flex items-center gap-1">
                   <div
                     className="flex-1 h-1 rounded-sm overflow-hidden"

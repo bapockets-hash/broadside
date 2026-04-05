@@ -22,6 +22,10 @@ const COINGECKO_IDS: Record<string, string> = {
   // Meme / community
   HYPE: 'hyperliquid', kPEPE: 'pepe', kBONK: 'bonk', TRUMP: 'official-trump',
   WIF: 'dogwifcoin', PENGU: 'pudgy-penguins', FARTCOIN: 'fartcoin',
+  WHITEWHALE: 'the-white-whale', PIPPIN: 'pippin', MEGA: 'megaeth',
+  PUMP: 'pump-fun', MON: 'monad', ASTER: 'aster-2', WLFI: 'world-liberty-financial',
+  PROVE: 'succinct', LIT: 'litentry', XPL: 'plasma', '2Z': 'doublezero',
+  CRCL: 'just-a-circle', ZORA: 'zora',
   // DeFi
   UNI: 'uniswap', AAVE: 'aave', CRV: 'curve-dao-token', LDO: 'lido-dao',
   ARB: 'arbitrum', JUP: 'jupiter-exchange-solana', ENA: 'ethena',
@@ -37,6 +41,7 @@ const STOCK_LOGOS: Record<string, string> = {
   GOOGL: 'https://logo.clearbit.com/google.com',
   PLTR: 'https://logo.clearbit.com/palantir.com',
   HOOD: 'https://logo.clearbit.com/robinhood.com',
+  BP: 'https://logo.clearbit.com/bp.com',
 };
 
 export default function BattleshipGame() {
@@ -63,8 +68,7 @@ export default function BattleshipGame() {
         for (const coin of coins) {
           const sym = idToSym[coin.id];
           if (sym && coin.image) {
-            // Convert large → thumb for smaller file size
-            logoUrlsRef.current[sym] = coin.image.replace('/large/', '/thumb/');
+            logoUrlsRef.current[sym] = coin.image; // keep /large/ for crisp display
           }
         }
       })
@@ -129,6 +133,10 @@ export default function BattleshipGame() {
         private hoverTimeLabel!: any;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         private hoverVolumeLabel!: any;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        private entryTooltipLabel!: any;
+        private entryDotX = -1;
+        private entryDotY = -1;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         private priceScaleGraphics!: any;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -225,6 +233,8 @@ export default function BattleshipGame() {
         private symbolLabel!: any;   // text fallback
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         private symbolImage!: any;   // logo image (shown when loaded)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        private symbolMaskGraphics!: any; // geometry mask for circular clipping
         private symbolColorHex = 0xff6600;
         private symbolLogoUrl: string | null = null;
 
@@ -254,11 +264,19 @@ export default function BattleshipGame() {
           return { colorHex: 0x00d4ff, cssColor: '#00d4ff' };
         }
 
+        private fitLogoToCircle() {
+          // Scale logo so its largest dimension fills the circle (radius 26 → diameter 52)
+          const target = 50;
+          const src = Math.max(this.symbolImage.width, this.symbolImage.height);
+          const scale = src > 0 ? target / src : 1;
+          this.symbolImage.setScale(scale);
+        }
+
         private loadSymbolLogo(symbol: string, url: string) {
           const key = `logo-${symbol}`;
           if (this.textures.exists(key)) {
             this.symbolImage.setTexture(key);
-            this.symbolImage.setScale(1.4);
+            this.fitLogoToCircle();
             this.symbolImage.setVisible(true);
             this.symbolLabel.setVisible(false);
             return;
@@ -270,7 +288,7 @@ export default function BattleshipGame() {
           this.load.once('complete', () => {
             if (this.selectedSymbol === symbol && this.symbolImage) {
               this.symbolImage.setTexture(key);
-              this.symbolImage.setScale(1.4);
+              this.fitLogoToCircle();
               this.symbolImage.setVisible(true);
               this.symbolLabel.setVisible(false);
             }
@@ -344,6 +362,14 @@ export default function BattleshipGame() {
           // Logo image (hidden until loaded)
           this.symbolImage = this.add.image(fortressX, fortressY + 10, '__DEFAULT')
             .setOrigin(0.5, 0.5).setDepth(9).setAlpha(0.92).setVisible(false);
+
+          // Circular clip mask — draws a circle at origin, positioned at image center
+          this.symbolMaskGraphics = this.add.graphics();
+          this.symbolMaskGraphics.fillStyle(0xffffff);
+          this.symbolMaskGraphics.fillCircle(0, 0, 26);
+          this.symbolMaskGraphics.setPosition(fortressX, fortressY + 10);
+          this.symbolMaskGraphics.setVisible(false);
+          this.symbolImage.setMask(this.symbolMaskGraphics.createGeometryMask());
 
           // Particle layer
           this.particleGraphics = this.add.graphics();
@@ -454,6 +480,17 @@ export default function BattleshipGame() {
             stroke: '#000000',
             strokeThickness: 1,
           }).setOrigin(0.5, 1).setDepth(23).setVisible(false);
+
+          // Entry dot tooltip — shown when cursor hovers near the entry dot
+          this.entryTooltipLabel = this.add.text(0, 0, '', {
+            fontFamily: 'monospace',
+            fontSize: '11px',
+            color: '#ffffff',
+            backgroundColor: '#0a1e38',
+            padding: { x: 5, y: 3 },
+            stroke: '#ffd700',
+            strokeThickness: 1,
+          }).setOrigin(0, 1).setDepth(24).setVisible(false);
 
           // Celestial body (sun/moon) — interactive toggle for day/night
           const celX = width * 0.82;
@@ -1302,6 +1339,9 @@ export default function BattleshipGame() {
             this.symbolImage.setAlpha(pulseAlpha * 0.92);
             this.symbolImage.setX(symX);
           }
+          if (this.symbolMaskGraphics) {
+            this.symbolMaskGraphics.setX(symX);
+          }
 
           // --- Cracks at damage thresholds ---
           if (dmg > 20) {
@@ -1455,15 +1495,8 @@ export default function BattleshipGame() {
 
           const raw = priceHistory.length >= 2 ? priceHistory : Array(20).fill(65000);
 
-          // --- Smoothing pass: 5-point moving average to remove sharp jumps ---
-          const smooth = (arr: number[], w = 3): number[] =>
-            arr.map((_, i) => {
-              const s = Math.max(0, i - w);
-              const e = Math.min(arr.length - 1, i + w);
-              const slice = arr.slice(s, e + 1);
-              return slice.reduce((a, b) => a + b, 0) / slice.length;
-            });
-          const prices = smooth(smooth(raw)); // two passes for extra silkiness
+          // Use raw prices — Catmull-Rom spline provides smoothness without distorting values
+          const prices = raw;
 
           const minP = Math.min(...prices);
           const maxP = Math.max(...prices);
@@ -1770,6 +1803,30 @@ export default function BattleshipGame() {
 
           const waterY = height * 0.68;
 
+          // Entry dot tooltip — show when cursor is within 14px of the dot
+          const curX = this.hoverPinned ? this.pinnedX : this.hoverX;
+          const curY = this.hoverPinned ? this.hoverY : this.hoverY;
+          if (
+            this.entryDotX >= 0 &&
+            curX >= 0 &&
+            Math.hypot(curX - this.entryDotX, curY - this.entryDotY) < 14 &&
+            this.entryPrice > 0
+          ) {
+            const dotColor = this.positionSide === 'long' ? 0x00ff88 : 0xff3333;
+            // Highlight ring around dot
+            this.hoverGraphics.lineStyle(2, dotColor, 0.9);
+            this.hoverGraphics.strokeCircle(this.entryDotX, this.entryDotY, 10);
+
+            const label = `ENTRY  ${this.fmtPrice(this.entryPrice)}`;
+            const offX = this.entryDotX + 14 > width - 100 ? -14 : 14;
+            this.entryTooltipLabel.setText(label);
+            this.entryTooltipLabel.setOrigin(offX > 0 ? 0 : 1, 0.5);
+            this.entryTooltipLabel.setPosition(this.entryDotX + offX, this.entryDotY);
+            this.entryTooltipLabel.setVisible(true);
+          } else {
+            this.entryTooltipLabel.setVisible(false);
+          }
+
           // Determine active X: pinned takes priority, otherwise only show in sea area
           let activeX: number;
           if (this.hoverPinned && this.pinnedX >= 0) {
@@ -1922,7 +1979,7 @@ export default function BattleshipGame() {
             this.liqExplosionLabel.setVisible(false);
           }
 
-          // Entry dot — position on x-axis via linear interpolation over timestamp span
+          // Entry dot — x from timestamp interpolation, y snapped to the spline
           const timestamps = this.priceTimestamps;
           const n = timestamps.length;
           if (n >= 2 && this.entryTimestamp > 0) {
@@ -1933,9 +1990,31 @@ export default function BattleshipGame() {
               ? Math.max(0, Math.min(1, (this.entryTimestamp - oldest) / span))
               : 1;
             const dotX = t * width;
+
+            // Snap Y to the actual rendered spline so the dot sits on the price line
+            let dotY = entryY;
+            if (this.splinePoints.length > 0) {
+              let best = this.splinePoints[0];
+              let bestDist = Infinity;
+              for (const pt of this.splinePoints) {
+                const d = Math.abs(pt.x - dotX);
+                if (d < bestDist) { bestDist = d; best = pt; }
+              }
+              dotY = best.y;
+            }
+
+            // Store for hover detection
+            this.entryDotX = dotX;
+            this.entryDotY = dotY;
+
             const dotColor = this.positionSide === 'long' ? 0x00ff88 : 0xff3333;
+            this.overlayGraphics.fillStyle(dotColor, 0.35);
+            this.overlayGraphics.fillCircle(dotX, dotY, 9);
             this.overlayGraphics.fillStyle(dotColor, 1);
-            this.overlayGraphics.fillCircle(dotX, entryY, 5);
+            this.overlayGraphics.fillCircle(dotX, dotY, 5);
+          } else {
+            this.entryDotX = -1;
+            this.entryDotY = -1;
           }
 
         }
@@ -2558,11 +2637,11 @@ export default function BattleshipGame() {
           // Draw weather effects
           this.drawWeather(width, height, this.waveTime);
 
-          // Draw price zones overlay (before waves)
-          this.drawPriceZones(width, height);
-
-          // Draw waves
+          // Draw waves first so splinePoints are current before drawPriceZones reads them
           this.drawWaves(width, height, this.waveTime, this.priceHistory);
+
+          // Draw price zones overlay (entry dot snaps to freshly-built spline)
+          this.drawPriceZones(width, height);
 
           // Draw price scale (right axis)
           this.drawPriceScale(width, height, this.priceHistory, this.currentPrice);
@@ -2623,9 +2702,9 @@ export default function BattleshipGame() {
 
           // Sync store if available
           if (currentStore) {
-            const pos = currentStore.position;
-            if (pos) {
-              this.marginHealth = pos.marginHealth;
+            const selectedPos = (currentStore as any).positions?.find((p: any) => p.symbol === currentStore.selectedSymbol) ?? null;
+            if (selectedPos) {
+              this.marginHealth = selectedPos.marginHealth;
             } else if (this.gamePhase === 'idle') {
               this.marginHealth = 100;
             }
@@ -2676,19 +2755,21 @@ export default function BattleshipGame() {
     if (!gameRef.current) return;
     const game = gameRef.current;
 
+    const selectedPos = (store as any).positions.find((p: any) => p.symbol === store.selectedSymbol) ?? null;
+
     game.events.emit('updateState', {
       currentPrice: store.currentPrice,
       priceHistory: store.priceHistory,
       priceTimestamps: store.priceTimestamps,
       volumeHistory: store.volumeHistory,
-      marginHealth: store.position?.marginHealth ?? 100,
+      marginHealth: selectedPos?.marginHealth ?? 100,
       gamePhase: store.gamePhase,
-      unrealizedPnl: store.position?.unrealizedPnl ?? 0,
+      unrealizedPnl: selectedPos?.unrealizedPnl ?? 0,
       combo: store.combo,
-      entryPrice: store.position?.entryPrice ?? 0,
-      positionSide: store.position?.side ?? null,
-      liquidationPrice: store.position?.liquidationPrice ?? 0,
-      openedAt: store.position?.openedAt ?? 0,
+      entryPrice: selectedPos?.entryPrice ?? 0,
+      positionSide: selectedPos?.side ?? null,
+      liquidationPrice: selectedPos?.liquidationPrice ?? 0,
+      openedAt: selectedPos?.openedAt ?? 0,
       timeframe: store.timeframe,
       lightMode: store.lightMode,
       selectedSymbol: store.selectedSymbol,
@@ -2696,15 +2777,15 @@ export default function BattleshipGame() {
     });
 
     // Fire torpedo when price moves against position
-    if (store.position) {
-      const pos = store.position;
+    if (selectedPos) {
+      const pos = selectedPos;
       const priceDiff = store.currentPrice - pos.entryPrice;
       const isAgainst = (pos.side === 'long' && priceDiff < -100) || (pos.side === 'short' && priceDiff > 100);
       if (isAgainst && Math.random() < 0.05) {
         game.events.emit('torpedo');
       }
     }
-  }, [store.currentPrice, store.gamePhase, store.position, store.priceHistory, store.volumeHistory, store.combo, store.timeframe, store.lightMode, store.selectedSymbol]);
+  }, [store.currentPrice, store.gamePhase, store.positions, store.priceHistory, store.volumeHistory, store.combo, store.timeframe, store.lightMode, store.selectedSymbol]);
 
   return (
     <div

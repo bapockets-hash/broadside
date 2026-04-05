@@ -7,6 +7,7 @@ export interface OrderParams {
   leverage: number;
   orderType: 'market';
   currentPrice?: number; // needed to calc BTC amount
+  marginMode?: 'isolated' | 'cross';
 }
 
 export interface Order {
@@ -203,6 +204,7 @@ export class PacificaClient {
       // Set leverage first — non-blocking on failure but must complete before signing order
       await this.setLeverage(btcSymbol, params.leverage);
 
+      const isIsolated = params.marginMode === 'isolated';
       const payload: Record<string, unknown> = {
         symbol: btcSymbol,
         reduce_only: false,
@@ -210,6 +212,8 @@ export class PacificaClient {
         side: params.side === 'buy' ? 'bid' : 'ask',
         slippage_percent: '1.0',
         client_order_id: genOrderId(),
+        isolated: isIsolated,
+        ...(isIsolated ? { margin: params.size.toFixed(2) } : {}),
         ...(BUILDER_CODE ? { builder_code: BUILDER_CODE } : {}),
       };
 
@@ -341,6 +345,42 @@ export class PacificaClient {
     }
   }
 
+  async getAllPositions(): Promise<Position[]> {
+    if (this.isDemo) return [];
+    try {
+      const response = await this.client.get(`/positions?account=${this.walletAddress}`);
+      const list: Record<string, unknown>[] = response.data?.data ?? [];
+      const results: Position[] = [];
+      for (const data of list) {
+        if (!data.amount || data.amount === '0') continue;
+        const symbol = String(data.symbol || '').replace('-PERP', '');
+        const side: 'long' | 'short' = data.side === 'long' || data.side === 'bid' ? 'long' : 'short';
+        const entryPrice = parseFloat(String(data.entry_price || '0'));
+        const size = parseFloat(String(data.amount || '0'));
+        const margin = parseFloat(String(data.margin || '0'));
+        const liqPrice = parseFloat(String(data.liquidation_price || '0'));
+        const openedAt = typeof data.created_at === 'number' ? data.created_at : Date.now();
+        if (!symbol || !entryPrice) continue;
+        results.push({
+          symbol,
+          side,
+          size,
+          entryPrice,
+          markPrice: entryPrice,
+          leverage: margin > 0 ? Math.round((size * entryPrice) / margin) : 1,
+          marginHealth: 100,
+          unrealizedPnl: 0,
+          liquidationPrice: liqPrice,
+          margin,
+          openedAt,
+        });
+      }
+      return results;
+    } catch {
+      return [];
+    }
+  }
+
   // ── Builder code approval ──────────────────────────────────────────────────
 
   /** Returns true if this wallet has already approved the given builder code */
@@ -373,6 +413,22 @@ export class PacificaClient {
       ...payload,
     };
     await this.client.post('/account/builder_codes/approve', body);
+  }
+
+  async getAccountSettings(): Promise<Record<string, { leverage: number; isolated: boolean }>> {
+    if (this.isDemo) return {};
+    try {
+      const res = await this.client.get(`/account/settings?account=${this.walletAddress}`);
+      const settings: { symbol: string; leverage: number; isolated: boolean }[] =
+        res.data?.data?.margin_settings ?? [];
+      const map: Record<string, { leverage: number; isolated: boolean }> = {};
+      for (const s of settings) {
+        map[s.symbol.replace('-PERP', '')] = { leverage: s.leverage, isolated: s.isolated };
+      }
+      return map;
+    } catch {
+      return {};
+    }
   }
 
   async getBalance(): Promise<number | null> {

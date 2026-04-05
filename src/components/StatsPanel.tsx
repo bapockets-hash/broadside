@@ -3,7 +3,8 @@
 import { useGameStore } from '@/store/gameStore';
 
 export default function StatsPanel() {
-  const { currentPrice, priceHistory, position, leverage, selectedSide } = useGameStore();
+  const { currentPrice, priceHistory, positions, selectedSymbol, leverage, selectedSide } = useGameStore();
+  const position = positions.find(p => p.symbol === selectedSymbol) ?? null;
 
   // Calculate 24h change (simulated)
   const firstPrice = priceHistory[0] || currentPrice;

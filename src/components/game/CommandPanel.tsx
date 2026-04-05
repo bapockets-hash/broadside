@@ -23,18 +23,21 @@ export default function CommandPanel({ onFire, onRetreat }: CommandPanelProps) {
   const {
     selectedSide,
     leverage,
+    marginMode,
     tradeSize,
-    position,
+    positions,
     isLoading,
     gamePhase,
     setSelectedSide,
     setLeverage,
+    setMarginMode,
     setTradeSize,
     lightMode,
     selectedSymbol,
     setSelectedSymbol,
     allMarketPrices,
   } = useGameStore();
+  const position = positions.find((p: import('@/store/gameStore').Position) => p.symbol === selectedSymbol) ?? null;
 
   const [selectorOpen, setSelectorOpen] = useState(false);
   const [marketInfoMap, setMarketInfoMap] = useState<Record<string, MarketInfo>>({});
@@ -94,8 +97,9 @@ export default function CommandPanel({ onFire, onRetreat }: CommandPanelProps) {
       ? (lightMode ? '#8a6200' : '#ffd700')
       : (lightMode ? '#007744' : '#00ff88');
 
-  const canFire = selectedSide !== null && leverage >= 1 && tradeSize > 0 && !isLoading && gamePhase === 'idle';
-  const canRetreat = position !== null && !isLoading && (gamePhase === 'active' || gamePhase === 'firing' || gamePhase === 'aiming');
+  const symbolLocked = !!position || gamePhase === 'sunk';
+  const canFire = selectedSide !== null && leverage >= 1 && tradeSize > 0 && !isLoading && !position && gamePhase !== 'aiming' && gamePhase !== 'firing';
+  const canRetreat = position !== null && !isLoading && gamePhase !== 'idle' && gamePhase !== 'sunk';
 
   return (
     <div
@@ -130,16 +134,16 @@ export default function CommandPanel({ onFire, onRetreat }: CommandPanelProps) {
         {/* Asset selector */}
         <div style={{ position: 'relative' }}>
           <button
-            onClick={(e) => { e.stopPropagation(); if (!position) setSelectorOpen(v => !v); }}
-            disabled={!!position}
+            onClick={(e) => { e.stopPropagation(); setSelectorOpen(v => !v); }}
             style={{
               display: 'flex', alignItems: 'center', gap: '8px',
               padding: '4px 8px', borderRadius: '4px',
               background: lightMode ? 'rgba(0,100,200,0.08)' : 'rgba(0,212,255,0.05)',
-              border: lightMode ? '1px solid rgba(0,100,200,0.4)' : '1px solid rgba(0,212,255,0.3)',
+              border: position
+                ? `1px solid ${lightMode ? 'rgba(0,100,200,0.6)' : 'rgba(0,212,255,0.5)'}`
+                : lightMode ? '1px solid rgba(0,100,200,0.4)' : '1px solid rgba(0,212,255,0.3)',
               color: lightMode ? '#0055aa' : '#00d4ff',
-              cursor: position ? 'not-allowed' : 'pointer',
-              opacity: position ? 0.6 : 1,
+              cursor: 'pointer',
               width: '100%', textAlign: 'left',
               fontFamily: 'var(--font-share-tech-mono, monospace)',
               fontSize: '12px',
@@ -197,8 +201,12 @@ export default function CommandPanel({ onFire, onRetreat }: CommandPanelProps) {
                             fontSize: '11px',
                             fontFamily: 'var(--font-share-tech-mono, monospace)',
                             fontWeight: isSelected ? 'bold' : 'normal',
+                            position: 'relative',
                           }}
                         >
+                          {positions.some((p: import('@/store/gameStore').Position) => p.symbol === sym) && (
+                            <span style={{ position: 'absolute', top: '2px', right: '2px', width: '5px', height: '5px', borderRadius: '50%', background: '#00ff88', display: 'block' }} />
+                          )}
                           {sym}
                           {entry && (
                             <span style={{ display: 'block', fontSize: '8px', color: lightMode ? '#667788' : '#667', marginTop: '1px' }}>
@@ -219,7 +227,7 @@ export default function CommandPanel({ onFire, onRetreat }: CommandPanelProps) {
         <div className="flex gap-2">
           <button
             onClick={() => setSelectedSide(selectedSide === 'short' ? null : 'short')}
-            disabled={gamePhase === 'active' || gamePhase === 'sunk'}
+            disabled={symbolLocked}
             className="flex-1 py-2 rounded font-bold text-sm transition-all"
             style={{
               background: selectedSide === 'short'
@@ -236,7 +244,7 @@ export default function CommandPanel({ onFire, onRetreat }: CommandPanelProps) {
           </button>
           <button
             onClick={() => setSelectedSide(selectedSide === 'long' ? null : 'long')}
-            disabled={gamePhase === 'active' || gamePhase === 'sunk'}
+            disabled={symbolLocked}
             className="flex-1 py-2 rounded font-bold text-sm transition-all"
             style={{
               background: selectedSide === 'long'
@@ -296,7 +304,7 @@ export default function CommandPanel({ onFire, onRetreat }: CommandPanelProps) {
               step={1}
               value={leverage}
               onChange={e => setLeverage(Number(e.target.value))}
-              disabled={gamePhase === 'active' || gamePhase === 'sunk'}
+              disabled={symbolLocked}
               style={{
                 position: 'absolute', inset: 0,
                 background: `linear-gradient(to right, ${leverageColor} ${fillPct}%, ${lightMode ? 'rgba(0,0,0,0.15)' : 'rgba(255,255,255,0.1)'} ${fillPct}%)`,
@@ -335,7 +343,7 @@ export default function CommandPanel({ onFire, onRetreat }: CommandPanelProps) {
                 <button
                   key={tick}
                   onClick={() => { if (gamePhase !== 'active' && gamePhase !== 'sunk') setLeverage(tick); }}
-                  disabled={gamePhase === 'active' || gamePhase === 'sunk'}
+                  disabled={symbolLocked}
                   style={{
                     position: 'absolute',
                     left: `${pct}%`,
@@ -387,6 +395,35 @@ export default function CommandPanel({ onFire, onRetreat }: CommandPanelProps) {
           FLEET ORDERS
         </div>
 
+        {/* Margin mode toggle */}
+        <div className="flex gap-1">
+          {(['cross', 'isolated'] as const).map(mode => {
+            const isActive = marginMode === mode;
+            const disabled = symbolLocked;
+            return (
+              <button
+                key={mode}
+                onClick={() => { if (!disabled) setMarginMode(mode); }}
+                disabled={disabled}
+                className="flex-1 py-1 rounded text-xs font-bold"
+                style={{
+                  background: isActive
+                    ? (lightMode ? 'rgba(0,100,200,0.2)' : 'rgba(0,212,255,0.18)')
+                    : (lightMode ? 'rgba(0,100,200,0.04)' : 'rgba(0,212,255,0.04)'),
+                  border: `1px solid ${isActive ? (lightMode ? '#0077cc' : '#00d4ff') : (lightMode ? 'rgba(0,100,200,0.2)' : 'rgba(0,212,255,0.12)')}`,
+                  color: isActive ? (lightMode ? '#0055aa' : '#00d4ff') : (lightMode ? '#667788' : '#556'),
+                  cursor: disabled ? 'not-allowed' : 'pointer',
+                  opacity: disabled ? 0.5 : 1,
+                  fontFamily: 'var(--font-share-tech-mono, monospace)',
+                  letterSpacing: '0.05em',
+                }}
+              >
+                {mode.toUpperCase()}
+              </button>
+            );
+          })}
+        </div>
+
         {/* Trade size input */}
         <div className="flex items-center gap-2">
           <span className="text-xs" style={{ color: lightMode ? '#445566' : '#888' }}>SIZE $</span>
@@ -394,7 +431,7 @@ export default function CommandPanel({ onFire, onRetreat }: CommandPanelProps) {
             type="number"
             value={tradeSize}
             onChange={(e) => setTradeSize(Math.max(1, Number(e.target.value)))}
-            disabled={gamePhase === 'active' || gamePhase === 'sunk'}
+            disabled={symbolLocked}
             className="flex-1 px-2 py-1 rounded text-sm font-bold outline-none"
             style={{
               background: lightMode ? 'rgba(0,100,200,0.08)' : 'rgba(0,212,255,0.05)',
@@ -413,7 +450,7 @@ export default function CommandPanel({ onFire, onRetreat }: CommandPanelProps) {
             <button
               key={size}
               onClick={() => setTradeSize(size)}
-              disabled={gamePhase === 'active' || gamePhase === 'sunk'}
+              disabled={symbolLocked}
               className="flex-1 py-0.5 rounded text-xs"
               style={{
                 background: tradeSize === size
@@ -475,9 +512,9 @@ export default function CommandPanel({ onFire, onRetreat }: CommandPanelProps) {
         </div>
 
         {/* Status hint */}
-        {gamePhase !== 'idle' && !canFire && (
-          <div className="text-xs text-center" style={{ color: canRetreat ? '#ff8800' : (lightMode ? '#445566' : '#555') }}>
-            {canRetreat ? '⚠ CLOSE POSITION TO OPEN NEW ORDER' : gamePhase.toUpperCase()}
+        {position && (
+          <div className="text-xs text-center" style={{ color: lightMode ? '#445566' : '#556' }}>
+            POSITION OPEN — SELECT NEW TARGET TO FIRE AGAIN
           </div>
         )}
 
@@ -494,7 +531,7 @@ export default function CommandPanel({ onFire, onRetreat }: CommandPanelProps) {
             <span style={{ color: position.side === 'long' ? '#00ff88' : '#ff3333' }}>
               {position.side.toUpperCase()}
             </span>
-            {' '}${position.size} @ {position.leverage}x
+            {' '}{position.size} {position.symbol} @ {position.leverage}x
             {' '}
             <span style={{ color: position.unrealizedPnl >= 0 ? '#00ff88' : '#ff3333' }}>
               {position.unrealizedPnl >= 0 ? '+' : ''}${position.unrealizedPnl.toFixed(2)}

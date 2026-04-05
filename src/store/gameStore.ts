@@ -10,6 +10,8 @@ export interface MarketEntry {
 }
 
 export interface Position {
+  id: string;
+  symbol: string;
   side: 'long' | 'short';
   size: number;
   entryPrice: number;
@@ -101,7 +103,7 @@ function defaultTimestamps(n: number, intervalMs: number): number[] {
 
 export interface GameState {
   // Position state
-  position: Position | null;
+  positions: Position[];
 
   // Game state
   currentPrice: number;
@@ -112,6 +114,7 @@ export interface GameState {
   volumeHistory: number[];     // display-ready volumes (30 points) matching priceHistory
   timeframe: Timeframe;
   leverage: number; // selected leverage 1-10
+  marginMode: 'isolated' | 'cross';
   selectedSide: 'long' | 'short' | null;
   tradeSize: number; // in USD
   isLoading: boolean;
@@ -130,6 +133,7 @@ export interface GameState {
   marketStats: { funding: number; openInterest: number; volume24h: number } | null;
   selectedSymbol: string;
   allMarketPrices: Record<string, MarketEntry>;
+  symbolLeverages: Record<string, number>; // persisted leverage per symbol
 
   // Actions
   setCurrentPrice: (price: number) => void;
@@ -137,13 +141,14 @@ export interface GameState {
   setHistoricalData: (prices: number[], timestamps: number[]) => void;
   setVolumeHistory: (volumes: number[]) => void;
   setTimeframe: (tf: Timeframe) => void;
-  setPosition: (position: Position | null) => void;
+  upsertPosition: (pos: Position) => void;
   setLeverage: (leverage: number) => void;
+  setMarginMode: (mode: 'isolated' | 'cross') => void;
   setSelectedSide: (side: 'long' | 'short' | null) => void;
   setTradeSize: (size: number) => void;
   setLoading: (loading: boolean) => void;
   setGamePhase: (phase: GamePhase) => void;
-  clearPosition: () => void;
+  removePosition: (id: string) => void;
   addCombatLog: (message: string, type: CombatLogEntry['type']) => void;
 
   // Meta game actions
@@ -157,10 +162,11 @@ export interface GameState {
   setMarketStats: (stats: { funding: number; openInterest: number; volume24h: number }) => void;
   setSelectedSymbol: (symbol: string) => void;
   setAllMarketPrices: (entries: MarketEntry[]) => void;
+  recordSymbolLeverage: (symbol: string, leverage: number) => void;
 }
 
 export const useGameStore = create<GameState>()(persist((set, get) => ({
-  position: null,
+  positions: [],
   currentPrice: 65000,
   priceHistory: Array(DISPLAY_POINTS).fill(65000),
   priceTimestamps: defaultTimestamps(DISPLAY_POINTS, 60_000),
@@ -169,6 +175,7 @@ export const useGameStore = create<GameState>()(persist((set, get) => ({
   volumeHistory: Array(DISPLAY_POINTS).fill(0),
   timeframe: '1m',
   leverage: 1,
+  marginMode: 'cross',
   selectedSide: null,
   tradeSize: 100,
   isLoading: false,
@@ -194,35 +201,11 @@ export const useGameStore = create<GameState>()(persist((set, get) => ({
   marketStats: null,
   selectedSymbol: 'BTC',
   allMarketPrices: {},
+  symbolLeverages: {},
 
   setCurrentPrice: (price) =>
-    set((state) => {
-      // Update position PnL if active
-      let updatedPosition = state.position;
-      if (state.position) {
-        const { side, entryPrice, size, leverage } = state.position;
-        const priceChange = price - entryPrice;
-        const unrealizedPnl =
-          side === 'long'
-            ? (priceChange / entryPrice) * size * leverage
-            : (-priceChange / entryPrice) * size * leverage;
-
-        // Calculate margin health (0-100)
-        const maxLoss = size; // 100% of margin = liquidation
-        const currentLoss = -unrealizedPnl;
-        const marginHealth = Math.max(0, Math.min(100, 100 - (currentLoss / maxLoss) * 100));
-
-        updatedPosition = {
-          ...state.position,
-          unrealizedPnl: Math.round(unrealizedPnl * 100) / 100,
-          marginHealth: Math.round(marginHealth),
-        };
-      }
-
-      return {
-        currentPrice: price,
-        position: updatedPosition,
-      };
+    set(() => {
+      return { currentPrice: price };
     }),
 
   addPriceHistory: (price) =>
@@ -270,9 +253,21 @@ export const useGameStore = create<GameState>()(persist((set, get) => ({
       return { volumeHistory: buf.slice(-DISPLAY_POINTS) };
     }),
 
-  setPosition: (position) => set({ position }),
+  upsertPosition: (pos) => set((state) => {
+    const exists = state.positions.some(p => p.id === pos.id);
+    const leverageUpdate = pos.leverage > 1
+      ? { symbolLeverages: { ...state.symbolLeverages, [pos.symbol]: pos.leverage } }
+      : {};
+    return {
+      positions: exists
+        ? state.positions.map(p => p.id === pos.id ? pos : p)
+        : [...state.positions, pos],
+      ...leverageUpdate,
+    };
+  }),
 
   setLeverage: (leverage) => set({ leverage }),
+  setMarginMode: (marginMode) => set({ marginMode }),
 
   setSelectedSide: (side) => set({ selectedSide: side }),
 
@@ -282,12 +277,14 @@ export const useGameStore = create<GameState>()(persist((set, get) => ({
 
   setGamePhase: (phase) => set({ gamePhase: phase }),
 
-  clearPosition: () =>
-    set({
-      position: null,
-      gamePhase: 'idle',
+  removePosition: (id) => set((state) => {
+    const remaining = state.positions.filter(p => p.id !== id);
+    return {
+      positions: remaining,
+      gamePhase: remaining.length > 0 ? 'active' : 'idle',
       isLoading: false,
-    }),
+    };
+  }),
 
   addCombatLog: (message, type) =>
     set((state) => ({
@@ -392,6 +389,9 @@ export const useGameStore = create<GameState>()(persist((set, get) => ({
 
   toggleLightMode: () => set((state) => ({ lightMode: !state.lightMode })),
   setMarketStats: (stats) => set({ marketStats: stats }),
+  recordSymbolLeverage: (symbol, leverage) => set((state) => ({
+    symbolLeverages: { ...state.symbolLeverages, [symbol]: leverage },
+  })),
 
   setSelectedSymbol: (symbol) =>
     set((state) => {
@@ -409,8 +409,6 @@ export const useGameStore = create<GameState>()(persist((set, get) => ({
         // Reset volumes so stale data from the previous symbol never bleeds through
         volumeHistory: Array(DISPLAY_POINTS).fill(0),
         marketStats: entry ? { funding: entry.funding, openInterest: entry.openInterest, volume24h: entry.volume24h } : null,
-        position: null,
-        gamePhase: 'idle',
       };
     }),
 
@@ -437,27 +435,9 @@ export const useGameStore = create<GameState>()(persist((set, get) => ({
         ? [...state.priceTimestamps.slice(0, -1), Date.now()]
         : [Date.now()];
 
-      let updatedPosition = state.position;
-      if (state.position) {
-        const { side, entryPrice, size, leverage } = state.position;
-        const priceChange = price - entryPrice;
-        const unrealizedPnl = side === 'long'
-          ? (priceChange / entryPrice) * size * leverage
-          : (-priceChange / entryPrice) * size * leverage;
-        const maxLoss = size;
-        const currentLoss = -unrealizedPnl;
-        const marginHealth = Math.max(0, Math.min(100, 100 - (currentLoss / maxLoss) * 100));
-        updatedPosition = {
-          ...state.position,
-          unrealizedPnl: Math.round(unrealizedPnl * 100) / 100,
-          marginHealth: Math.round(marginHealth),
-        };
-      }
-
       return {
         allMarketPrices: newMap,
         currentPrice: price,
-        position: updatedPosition,
         priceHistory: updatedHistory,
         priceTimestamps: updatedTsHistory,
         marketStats: { funding: entry.funding, openInterest: entry.openInterest, volume24h: entry.volume24h },
@@ -466,7 +446,7 @@ export const useGameStore = create<GameState>()(persist((set, get) => ({
 }), {
   name: 'broadside-game-state',
   partialize: (state) => ({
-    position: state.position,
+    positions: state.positions,
     gamePhase: state.gamePhase === 'active' ? 'active' : 'idle',
     selectedSymbol: state.selectedSymbol,
     leverage: state.leverage,
@@ -475,5 +455,6 @@ export const useGameStore = create<GameState>()(persist((set, get) => ({
     xp: state.xp,
     rank: state.rank,
     sessionStats: state.sessionStats,
+    symbolLeverages: state.symbolLeverages,
   }),
 }));

@@ -73,7 +73,7 @@ function useMissionToast() {
 
 export default function HUD() {
   const {
-    position,
+    positions,
     currentPrice,
     gamePhase,
     combo,
@@ -81,6 +81,7 @@ export default function HUD() {
     marketStats,
     selectedSymbol,
   } = useGameStore();
+  const position = positions.find((p: import('@/store/gameStore').Position) => p.symbol === selectedSymbol) ?? null;
 
   // Share modal state
   const [shareData, setShareData] = useState<{ pnl: number; side: 'long' | 'short'; entryPrice: number; exitPrice: number } | null>(null);
@@ -184,8 +185,11 @@ export default function HUD() {
     maximumFractionDigits: 2,
   }).format(displayPnl);
 
-  const pnlPct = position?.margin
-    ? ((pnlTarget / position.margin) * 100).toFixed(2)
+  const effectiveMargin = position
+    ? (position.margin > 0 ? position.margin : (position.size * position.entryPrice) / position.leverage)
+    : 0;
+  const pnlPct = effectiveMargin > 0
+    ? ((pnlTarget / effectiveMargin) * 100).toFixed(2)
     : null;
 
   return (
