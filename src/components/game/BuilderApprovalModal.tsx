@@ -11,20 +11,15 @@ function localKey(wallet: string) {
   return `broadside_builder_approved_${wallet}`;
 }
 
-const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
-
 function getCachedApproval(wallet: string): boolean {
   try {
-    const raw = localStorage.getItem(localKey(wallet));
-    if (!raw) return false;
-    const { approved, ts } = JSON.parse(raw);
-    return approved === true && Date.now() - ts < CACHE_TTL_MS;
+    return localStorage.getItem(localKey(wallet)) === 'true';
   } catch { return false; }
 }
 
 function setCachedApproval(wallet: string) {
   try {
-    localStorage.setItem(localKey(wallet), JSON.stringify({ approved: true, ts: Date.now() }));
+    localStorage.setItem(localKey(wallet), 'true');
   } catch { /* ignore */ }
 }
 
