@@ -12,7 +12,7 @@ function genPositionId(): string {
   return 'pos-' + Math.random().toString(36).slice(2, 10);
 }
 
-/** Fetch authoritative position data from Pacifica and sync liq price + margin */
+/** Fetch one position from Pacifica and sync liq price + margin (used post-order) */
 async function syncPosition(
   walletAddress: string,
   signFn: (msg: string) => Promise<string>,
@@ -27,13 +27,8 @@ async function syncPosition(
     const existing = store.positions.find(p => p.id === positionId);
     if (!existing) return;
 
-    // For cross-margin, Pacifica returns margin=0 — keep the user's trade size as margin
     const margin = pos.margin > 0 ? pos.margin : existing.margin;
-
-    // Use API liq price if valid; otherwise keep existing
     const liqPrice = pos.liquidationPrice > 0 ? pos.liquidationPrice : existing.liquidationPrice;
-
-    // Use authoritative token amount from API if available
     const size = pos.size > 0 ? pos.size : existing.size;
 
     store.upsertPosition({
@@ -45,6 +40,37 @@ async function syncPosition(
     });
   } catch {
     // silently ignore — stale estimate stays
+  }
+}
+
+/** Single batch sync for all open positions — one API call regardless of position count */
+async function syncAllPositions(
+  walletAddress: string,
+  signFn: (msg: string) => Promise<string>,
+) {
+  try {
+    const client = createPacificaClient(walletAddress, signFn);
+    const all = await client.getAllPositions();
+    const store = useGameStore.getState();
+    const openSymbols = new Set(all.map(p => p.symbol));
+
+    for (const pos of all) {
+      const existing = store.positions.find(p => p.symbol === pos.symbol);
+      if (!existing) continue;
+      const liqPrice = pos.liquidationPrice > 0 ? pos.liquidationPrice : existing.liquidationPrice;
+      const size = pos.size > 0 ? pos.size : existing.size;
+      const margin = pos.margin > 0 ? pos.margin : existing.margin;
+      store.upsertPosition({ ...existing, size, liquidationPrice: liqPrice, margin });
+    }
+
+    // Remove any positions no longer open on Pacifica
+    for (const storePos of store.positions) {
+      if (!openSymbols.has(storePos.symbol)) {
+        store.removePosition(storePos.id);
+      }
+    }
+  } catch {
+    // silently ignore
   }
 }
 
@@ -225,11 +251,29 @@ export function useClosePosition(position: import('@/store/gameStore').Position 
     try {
       const client = createPacificaClient(walletAddress ?? 'demo-wallet', signFn);
       const currentPrice = useGameStore.getState().allMarketPrices[position.symbol]?.price ?? useGameStore.getState().currentPrice;
-      const result = await client.closePosition(
-        position.symbol + '-PERP',
-        { side: position.side, size: position.size, entryPrice: position.entryPrice },
-        currentPrice,
-      );
+
+      // Retry once on 429 rate limit with a short backoff
+      let result;
+      try {
+        result = await client.closePosition(
+          position.symbol + '-PERP',
+          { side: position.side, size: position.size, entryPrice: position.entryPrice },
+          currentPrice,
+        );
+      } catch (firstErr) {
+        const msg = firstErr instanceof Error ? firstErr.message : String(firstErr);
+        if (msg.includes('429')) {
+          addCombatLog('RATE LIMITED — retrying in 3s...', 'info');
+          await new Promise(r => setTimeout(r, 3000));
+          result = await client.closePosition(
+            position.symbol + '-PERP',
+            { side: position.side, size: position.size, entryPrice: position.entryPrice },
+            currentPrice,
+          );
+        } else {
+          throw firstErr;
+        }
+      }
 
       const pnl = position.unrealizedPnl;
       const pnlFormatted = `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
@@ -384,8 +428,9 @@ export function usePositionMonitor() {
 
         upsert({ ...pos, unrealizedPnl, marginHealth });
 
-        if (waveCountRef.current % 10 === 0 && walletAddress) {
-          syncPosition(walletAddress, signFn, pos.symbol, pos.id);
+        // Batch sync once per 20 ticks (60s) — one API call for all positions
+        if (waveCountRef.current % 20 === 0 && walletAddress && pos === allPositions[0]) {
+          syncAllPositions(walletAddress, signFn);
         }
 
         if (marginHealth < 2) {
