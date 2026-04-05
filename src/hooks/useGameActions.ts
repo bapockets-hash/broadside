@@ -180,7 +180,6 @@ export function useFireCannons() {
 
       // Fetch authoritative liq price from Pacifica (delayed to let order settle)
       setTimeout(() => syncPosition(walletAddress ?? 'demo-wallet', signFn, selectedSymbol, positionId), LIQ_SYNC_INITIAL_MS);
-      setTimeout(() => syncPosition(walletAddress ?? 'demo-wallet', signFn, selectedSymbol, positionId), LIQ_SYNC_RETRY_MS);
 
       addCombatLog(
         `${selectedSide === 'short' ? '⚔ CANNONS FIRED!' : '🛡 SHIELDS RAISED!'} ${leverage}x $${tradeSize}`,
