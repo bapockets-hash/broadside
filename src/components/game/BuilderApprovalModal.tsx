@@ -63,7 +63,7 @@ export default function BuilderApprovalModal() {
     try {
       const client = createPacificaClient(walletAddress, signFn);
       await client.approveBuilderCode(BUILDER_CODE, MAX_FEE_RATE);
-      localStorage.setItem(localKey(walletAddress), 'true');
+      setCachedApproval(walletAddress);
       setDone(true);
       setTimeout(() => setShow(false), 1800);
     } catch (err) {
