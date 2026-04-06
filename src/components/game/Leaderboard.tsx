@@ -70,6 +70,7 @@ export default function Leaderboard() {
     >
       {/* Open Positions */}
       <div
+        data-tutorial-id="positions-list"
         className="flex-1 flex flex-col px-3 py-2 overflow-y-auto"
         style={{ borderBottom: lightMode ? '1px solid rgba(0,100,200,0.2)' : '1px solid rgba(0,212,255,0.2)' }}
       >

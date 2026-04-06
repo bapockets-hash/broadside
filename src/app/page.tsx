@@ -92,7 +92,7 @@ function GameContent() {
         </div>
 
         {/* Center: Game canvas + HUD + timeframe selector */}
-        <div className="flex-1 relative overflow-hidden">
+        <div data-tutorial-id="game-canvas" className="flex-1 relative overflow-hidden">
           <BattleshipGame />
           <HUD />
           <TimeframeSelector />

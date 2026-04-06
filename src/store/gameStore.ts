@@ -134,6 +134,8 @@ export interface GameState {
   selectedSymbol: string;
   allMarketPrices: Record<string, MarketEntry>;
   symbolLeverages: Record<string, number>; // persisted leverage per symbol
+  tutorialSeen: boolean;
+  tutorialOpen: boolean;
 
   // Actions
   setCurrentPrice: (price: number) => void;
@@ -163,6 +165,8 @@ export interface GameState {
   setSelectedSymbol: (symbol: string) => void;
   setAllMarketPrices: (entries: MarketEntry[]) => void;
   recordSymbolLeverage: (symbol: string, leverage: number) => void;
+  setTutorialSeen: (seen: boolean) => void;
+  setTutorialOpen: (open: boolean) => void;
 }
 
 export const useGameStore = create<GameState>()(persist((set, get) => ({
@@ -202,6 +206,8 @@ export const useGameStore = create<GameState>()(persist((set, get) => ({
   selectedSymbol: 'BTC',
   allMarketPrices: {},
   symbolLeverages: {},
+  tutorialSeen: false,
+  tutorialOpen: false,
 
   setCurrentPrice: (price) =>
     set(() => {
@@ -393,6 +399,9 @@ export const useGameStore = create<GameState>()(persist((set, get) => ({
     symbolLeverages: { ...state.symbolLeverages, [symbol]: leverage },
   })),
 
+  setTutorialSeen: (seen) => set({ tutorialSeen: seen }),
+  setTutorialOpen: (open) => set({ tutorialOpen: open }),
+
   setSelectedSymbol: (symbol) =>
     set((state) => {
       const entry = state.allMarketPrices[symbol];
@@ -461,5 +470,6 @@ export const useGameStore = create<GameState>()(persist((set, get) => ({
     rank: state.rank,
     sessionStats: state.sessionStats,
     symbolLeverages: state.symbolLeverages,
+    tutorialSeen: state.tutorialSeen,
   }),
 }));

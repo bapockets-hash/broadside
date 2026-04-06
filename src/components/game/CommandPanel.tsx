@@ -123,7 +123,7 @@ export default function CommandPanel({ onFire, onRetreat }: CommandPanelProps) {
         </div>
 
         {/* Asset selector */}
-        <div style={{ position: 'relative' }}>
+        <div data-tutorial-id="asset-selector" style={{ position: 'relative' }}>
           <button
             onClick={(e) => { e.stopPropagation(); setSelectorOpen(v => !v); }}
             style={{
@@ -215,7 +215,7 @@ export default function CommandPanel({ onFire, onRetreat }: CommandPanelProps) {
         </div>
 
         {/* Attack / Defend buttons */}
-        <div className="flex gap-2">
+        <div data-tutorial-id="side-buttons" className="flex gap-2">
           <button
             onClick={() => setSelectedSide(selectedSide === 'short' ? null : 'short')}
             disabled={symbolLocked}
@@ -261,6 +261,7 @@ export default function CommandPanel({ onFire, onRetreat }: CommandPanelProps) {
 
       {/* Center: Power Level */}
       <div
+        data-tutorial-id="leverage-slider"
         className="flex flex-col justify-center px-4 py-3 gap-2 flex-1"
         style={{ borderRight: lightMode ? '1px solid rgba(0,100,200,0.2)' : '1px solid rgba(0,212,255,0.15)' }}
       >
@@ -379,6 +380,7 @@ export default function CommandPanel({ onFire, onRetreat }: CommandPanelProps) {
 
       {/* Right: Fleet Orders */}
       <div
+        data-tutorial-id="fleet-orders"
         className="flex flex-col justify-center px-4 py-3 gap-2"
         style={{ width: '240px', flexShrink: 0 }}
       >

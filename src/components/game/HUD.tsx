@@ -1,6 +1,7 @@
 'use client';
 
 import { useGameStore } from '@/store/gameStore';
+import TutorialOverlay from './TutorialOverlay';
 import { useEffect, useRef, useState } from 'react';
 import { soundEngine } from '@/lib/soundEngine';
 import ShareModal from './ShareModal';
@@ -82,6 +83,7 @@ export default function HUD() {
     lightMode,
     marketStats,
     selectedSymbol,
+    setTutorialOpen,
   } = useGameStore();
   const position = positions.find((p: import('@/store/gameStore').Position) => p.symbol === selectedSymbol) ?? null;
 
@@ -272,7 +274,7 @@ export default function HUD() {
       )}
 
       {/* Top-left: Hull integrity */}
-      <div className="absolute left-3 pointer-events-none" style={{ top: '24px' }}>
+      <div data-tutorial-id="hull-integrity" className="absolute left-3 pointer-events-none" style={{ top: '24px' }}>
         <div
           className="px-2 py-1 rounded text-xs panel-corners glass-panel"
           style={{ fontFamily: 'var(--font-share-tech-mono, monospace)' }}
@@ -534,6 +536,36 @@ export default function HUD() {
 
       {/* Builder code approval — shown once per wallet until approved */}
       <BuilderApprovalModal />
+
+      {/* Tutorial help button */}
+      <button
+        onClick={() => setTutorialOpen(true)}
+        className="pointer-events-auto"
+        style={{
+          position: 'absolute',
+          top: '24px',
+          right: '12px',
+          width: '26px',
+          height: '26px',
+          borderRadius: '50%',
+          border: `1px solid ${lightMode ? 'rgba(0,100,200,0.4)' : 'rgba(0,212,255,0.35)'}`,
+          background: lightMode ? 'rgba(0,100,200,0.08)' : 'rgba(0,212,255,0.07)',
+          color: lightMode ? '#0055aa' : '#00d4ff',
+          fontSize: '13px',
+          fontFamily: 'monospace',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 15,
+        }}
+        title="How to play"
+      >
+        ?
+      </button>
+
+      {/* Tutorial overlay */}
+      <TutorialOverlay />
     </div>
   );
 }
