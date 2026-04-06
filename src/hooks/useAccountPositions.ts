@@ -29,10 +29,14 @@ function applyFrame(frame: PositionFrame) {
   const margin = parseFloat(frame.m || '0');
   const side = frame.d === 'bid' ? 'long' : 'short';
 
-  // Zero amount = position closed externally — remove from store
+  // Zero amount = position closed externally — remove from store.
+  // But ignore transient zero-amount frames that arrive during order settlement
+  // (Pacifica sends amount=0 briefly while the fill is processing).
+  // Only remove if the position has been open for more than 10 seconds.
   if (!tokenAmount) {
     if (existingPos) {
-      store.removePosition(existingPos.id);
+      const ageMs = Date.now() - (existingPos.openedAt ?? 0);
+      if (ageMs > 10_000) store.removePosition(existingPos.id);
     }
     return false;
   }
