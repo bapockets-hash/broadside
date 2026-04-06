@@ -96,6 +96,9 @@ function applyFrame(frame: PositionFrame) {
  */
 export function useAccountPositions() {
   const { walletAddress, signFn } = usePacificaSigner();
+  const signFnRef = useRef(signFn);
+  signFnRef.current = signFn; // always up-to-date without triggering effect re-runs
+
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -107,7 +110,7 @@ export function useAccountPositions() {
     // Seed store with any positions already open on Pacifica
     async function seedPositions() {
       try {
-        const client = createPacificaClient(walletAddress, signFn);
+        const client = createPacificaClient(walletAddress, signFnRef.current);
         const [all, accountSettings, marketInfo] = await Promise.all([
           client.getAllPositions(),
           client.getAccountSettings(),
@@ -140,11 +143,15 @@ export function useAccountPositions() {
             });
           }
         }
-        // Remove positions that are no longer open on Pacifica
-        const openSymbols = new Set(all.map(p => p.symbol));
-        for (const storePos of store.positions) {
-          if (!openSymbols.has(storePos.symbol)) {
-            store.removePosition(storePos.id);
+        // Remove positions no longer open on Pacifica.
+        // Only reconcile when Pacifica returned data — an empty response
+        // likely means a transient API error and must not wipe the store.
+        if (all.length > 0) {
+          const openSymbols = new Set(all.map(p => p.symbol));
+          for (const storePos of store.positions) {
+            if (!openSymbols.has(storePos.symbol)) {
+              store.removePosition(storePos.id);
+            }
           }
         }
 
@@ -208,5 +215,8 @@ export function useAccountPositions() {
       wsRef.current?.close();
       wsRef.current = null;
     };
-  }, [walletAddress, signFn]);
+  // signFn intentionally omitted — read via signFnRef so Privy's unstable
+  // signMessage reference doesn't tear down and rebuild the WS on every render.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [walletAddress]);
 }
