@@ -102,6 +102,11 @@ export interface MarketInfo {
 let marketInfoCache: Record<string, MarketInfo> | null = null;
 let marketInfoFetch: Promise<Record<string, MarketInfo>> | null = null;
 
+// Track account settings that have already been signed+sent this session.
+// Avoids redundant wallet prompts when leverage/margin mode haven't changed.
+const sessionLeverages: Record<string, number> = {};
+const sessionMarginModes: Record<string, 'isolated' | 'cross'> = {};
+
 async function fetchMarketInfo(): Promise<Record<string, MarketInfo>> {
   if (marketInfoCache) return marketInfoCache;
   if (marketInfoFetch) return marketInfoFetch;
@@ -170,10 +175,13 @@ export class PacificaClient {
 
   async setLeverage(symbol: string, leverage: number): Promise<boolean> {
     if (this.isDemo) return true;
+    const rounded = Math.round(leverage);
+    if (sessionLeverages[symbol] === rounded) return true; // already set this session
     try {
-      const payload = { symbol, leverage: Math.round(leverage) };
+      const payload = { symbol, leverage: rounded };
       const body = await this.buildSignedBody('update_leverage', payload);
       await this.client.post('/account/leverage', body);
+      sessionLeverages[symbol] = rounded;
       return true;
     } catch (err) {
       if (axios.isAxiosError(err) && err.response) {
@@ -185,10 +193,12 @@ export class PacificaClient {
 
   async setMarginMode(symbol: string, mode: 'isolated' | 'cross'): Promise<boolean> {
     if (this.isDemo) return true;
+    if (sessionMarginModes[symbol] === mode) return true; // already set this session
     try {
       const payload = { symbol, is_isolated: mode === 'isolated' };
       const body = await this.buildSignedBody('update_margin_mode', payload);
       await this.client.post('/account/margin', body);
+      sessionMarginModes[symbol] = mode;
       return true;
     } catch (err) {
       if (axios.isAxiosError(err) && err.response) {
