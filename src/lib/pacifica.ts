@@ -171,8 +171,6 @@ export class PacificaClient {
   async setLeverage(symbol: string, leverage: number): Promise<boolean> {
     if (this.isDemo) return true;
     try {
-      // Type must be "update_leverage" per Pacifica docs
-      // builder_code is not a documented field for this endpoint — omit it
       const payload = { symbol, leverage: Math.round(leverage) };
       const body = await this.buildSignedBody('update_leverage', payload);
       await this.client.post('/account/leverage', body);
@@ -180,6 +178,21 @@ export class PacificaClient {
     } catch (err) {
       if (axios.isAxiosError(err) && err.response) {
         console.warn('[Pacifica] setLeverage error:', JSON.stringify(err.response.data));
+      }
+      return false;
+    }
+  }
+
+  async setMarginMode(symbol: string, mode: 'isolated' | 'cross'): Promise<boolean> {
+    if (this.isDemo) return true;
+    try {
+      const payload = { symbol, is_isolated: mode === 'isolated' };
+      const body = await this.buildSignedBody('update_margin_mode', payload);
+      await this.client.post('/account/margin', body);
+      return true;
+    } catch (err) {
+      if (axios.isAxiosError(err) && err.response) {
+        console.warn('[Pacifica] setMarginMode error:', JSON.stringify(err.response.data));
       }
       return false;
     }
@@ -201,10 +214,15 @@ export class PacificaClient {
       const decimals = Math.max(0, Math.round(-Math.log10(lotSize)));
       const btcAmount = (Math.floor(notional / btcPrice / lotSize) * lotSize).toFixed(decimals);
 
-      // Fire leverage update in the background — does not need to complete before the order
+      // Fire leverage + margin mode updates in the background (must not block or co-sign with order)
       this.setLeverage(btcSymbol, params.leverage).catch(() => {});
+      if (params.marginMode) {
+        this.setMarginMode(btcSymbol, params.marginMode).catch(() => {});
+      }
 
-      const isIsolated = params.marginMode === 'isolated';
+      // `isolated` and `margin` are NOT valid create_market_order fields per Pacifica docs —
+      // margin mode is a separate account setting (setMarginMode above).
+      // Including unknown fields in the signed payload causes "Verification failed".
       const payload: Record<string, unknown> = {
         symbol: btcSymbol,
         reduce_only: false,
@@ -212,8 +230,6 @@ export class PacificaClient {
         side: params.side === 'buy' ? 'bid' : 'ask',
         slippage_percent: '1.0',
         client_order_id: genOrderId(),
-        isolated: isIsolated,
-        ...(isIsolated ? { margin: params.size.toFixed(2) } : {}),
         ...(BUILDER_CODE ? { builder_code: BUILDER_CODE } : {}),
       };
 
