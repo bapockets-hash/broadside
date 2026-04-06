@@ -219,6 +219,7 @@ export default function TutorialOverlay() {
           transform: cardTransform,
           width: CARD_WIDTH,
           zIndex: 1001,
+          pointerEvents: 'all',
           background: 'rgba(4, 12, 28, 0.97)',
           border: '1px solid rgba(0,212,255,0.5)',
           borderRadius: '10px',
