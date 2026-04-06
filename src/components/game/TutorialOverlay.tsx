@@ -19,8 +19,6 @@ const STEPS: Step[] = [
   {
     title: 'THE BATTLE ARENA',
     content: 'The fortress represents the current market price. Watch it move in real time as the market breathes. Your mission: predict which way it goes.',
-    targetId: 'game-canvas',
-    tooltipSide: 'below',
   },
   {
     title: 'SELECT YOUR TARGET',

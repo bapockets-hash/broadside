@@ -1,7 +1,6 @@
 'use client';
 
 import { useGameStore } from '@/store/gameStore';
-import TutorialOverlay from './TutorialOverlay';
 import { useEffect, useRef, useState } from 'react';
 import { soundEngine } from '@/lib/soundEngine';
 import ShareModal from './ShareModal';
@@ -564,8 +563,6 @@ export default function HUD() {
         ?
       </button>
 
-      {/* Tutorial overlay */}
-      <TutorialOverlay />
     </div>
   );
 }

@@ -14,6 +14,7 @@ import Leaderboard from '@/components/game/Leaderboard';
 import AdmiralPanel from '@/components/game/AdmiralPanel';
 import TimeframeSelector from '@/components/game/TimeframeSelector';
 import ConnectWallet from '@/components/ConnectWallet';
+import TutorialOverlay from '@/components/game/TutorialOverlay';
 
 // Dynamic import for Phaser to avoid SSR issues
 const BattleshipGame = dynamic(
@@ -118,6 +119,7 @@ export default function Home() {
     <div className="h-full">
       <ConnectWallet />
       <GameContent />
+      <TutorialOverlay />
     </div>
   );
 }
