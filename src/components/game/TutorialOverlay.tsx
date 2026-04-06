@@ -180,13 +180,15 @@ export default function TutorialOverlay() {
         }
       `}</style>
 
-      {/* Full-screen click-to-dismiss backdrop (only shown when no spotlight) */}
-      {!spotlight && (
-        <div
-          style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.82)', pointerEvents: 'all' }}
-          onClick={handleClose}
-        />
-      )}
+      {/* Full-screen backdrop — blocks interaction behind the tutorial but does NOT dismiss on click
+           (click-through bug: mousedown on NEXT, DOM re-renders with backdrop, mouseup fires handleClose) */}
+      <div
+        style={{
+          position: 'fixed', inset: 0, zIndex: 1000,
+          background: spotlight ? 'transparent' : 'rgba(0,0,0,0.82)',
+          pointerEvents: 'all',
+        }}
+      />
 
       {/* Spotlight cutout */}
       {spotlight && (
